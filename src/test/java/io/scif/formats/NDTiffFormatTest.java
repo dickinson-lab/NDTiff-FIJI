@@ -2,34 +2,31 @@
 package io.scif.formats;
 
 import static io.scif.formats.NDTiffFormat.Checker;
-import static io.scif.formats.NDTiffFormat.FIF_ID;
-import static io.scif.formats.NDTiffFormat.HEADER_LENGTH;
 import static io.scif.formats.NDTiffFormat.Metadata;
 import static io.scif.formats.NDTiffFormat.Parser;
 import static io.scif.formats.NDTiffFormat.Reader;
-import static io.scif.formats.NDTiffFormat.Translator;
-import static io.scif.formats.NDTiffFormat.Writer;
+import static org.junit.Assert.assertArrayEquals;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
 
 import io.scif.ByteArrayPlane;
-import io.scif.DefaultImageMetadata;
 import io.scif.FormatException;
 import io.scif.ImageMetadata;
 import io.scif.config.SCIFIOConfig;
 import io.scif.util.FormatTools;
 
+import java.io.File;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
-import java.time.LocalDate;
-import java.util.Collections;
+import java.util.Arrays;
+import java.util.HashMap;
 import java.util.List;
 
+import mmcorej.org.json.JSONObject;
+
 import net.imagej.axis.Axes;
-import net.imagej.axis.AxisType;
 import net.imagej.axis.CalibratedAxis;
-import net.imagej.axis.DefaultLinearAxis;
 import net.imglib2.Interval;
 import net.imglib2.util.Intervals;
 
@@ -37,352 +34,204 @@ import org.junit.AfterClass;
 import org.junit.BeforeClass;
 import org.junit.Rule;
 import org.junit.Test;
-import org.junit.rules.ExpectedException;
+import org.junit.rules.TemporaryFolder;
+import org.micromanager.ndtiffstorage.NDTiffStorage;
 import org.scijava.Context;
-import org.scijava.io.handle.DataHandle;
-import org.scijava.io.handle.DataHandleService;
-import org.scijava.io.location.BytesLocation;
-import org.scijava.io.location.Location;
+import org.scijava.io.location.FileLocation;
 
 /**
- * Tests for {@link NDTiffFormat}
- *
- * @author Richard Domander (Royal Veterinary College, London)
+ * Tests for {@link NDTiffFormat}.
+ * <p>
+ * Rather than shipping a binary NDTiff fixture, these tests build tiny real
+ * datasets on disk using {@code NDTiffStorage}'s own writing API (the same
+ * library used to read them back), then exercise the Checker/Parser/Reader
+ * exactly as Fiji would.
+ * </p>
  */
 public class NDTiffFormatTest {
 
-	// Create a context for testing, in a normal run it's automatically created by
-	// SciJava
 	private static final Context context = new Context();
-	private static final DataHandleService dataHandleService = context.getService(
-		DataHandleService.class);
-	private static final Checker checker = new Checker();
-	private static Parser parser;
 	private static final NDTiffFormat format = new NDTiffFormat();
+
+	@Rule
+	public TemporaryFolder tmp = new TemporaryFolder();
 
 	@BeforeClass
 	public static void oneTimeSetup() throws Exception {
 		format.setContext(context);
-		// Casting Parser to FictionalImageFormat.Parser
-		parser = (Parser) format.createParser();
 	}
 
 	@AfterClass
 	public static void oneTimeTearDown() throws Exception {
-		// It's good manners to clear the resources your tests. This essential when
-		// running multiple test cases, because you don't want the context created
-		// here to affect other tests
 		context.dispose();
 	}
 
-	/** Test that matching fails if file is too short */
-	@Test
-	public void testIsFormatFalseShortStream() throws Exception {
-		final DataHandle<Location> stream = dataHandleService.create(new BytesLocation(
-			new byte[] { 0xC, 0x0, 0xF }));
-
-		assertFalse(checker.isFormat(stream));
+	/** Writes a tiny NDTiff dataset directly into {@code dir}. */
+	private static NDTiffStorage writeDataset(final File dir,
+		final List<HashMap<String, Object>> planeAxes, final int width,
+		final int height) throws Exception
+	{
+		final NDTiffStorage storage = new NDTiffStorage(dir.getAbsolutePath(),
+			"test", new JSONObject(), 0, 0, false, null, 10, null, false);
+		int value = 0;
+		for (final HashMap<String, Object> axes : planeAxes) {
+			final short[] pixels = new short[width * height];
+			Arrays.fill(pixels, (short) (100 * ++value));
+			storage.putImage(pixels, new JSONObject(), axes, false, 16, height,
+				width).get();
+		}
+		storage.finishedWriting();
+		storage.closeAndWait();
+		return storage;
 	}
 
-	/** Test that matching fails if file has wrong start */
-	@Test
-	public void testIsFormatFalseIncorrectBytes() throws Exception {
-		final DataHandle<Location> stream = dataHandleService.create(new BytesLocation(
-			new byte[] { 0xC, 0x0, 0xF, 0xF, 0xE, 0xF }));
+	private static HashMap<String, Object> axes(final String k1, final int v1) {
+		final HashMap<String, Object> axes = new HashMap<>();
+		axes.put(k1, v1);
+		return axes;
+	}
 
-		assertFalse(checker.isFormat(stream));
+	private static HashMap<String, Object> axes(final String k1, final int v1,
+		final String k2, final int v2)
+	{
+		final HashMap<String, Object> axes = axes(k1, v1);
+		axes.put(k2, v2);
+		return axes;
 	}
 
 	@Test
-	public void testIsFormat() throws Exception {
-		// Add an extra byte to the end to check that it doesn't affect the result
-		final DataHandle<Location> stream = dataHandleService.create(new BytesLocation(
-			new byte[] { 0xC, 0x0, 0xF, 0xF, 0xE, 0xE, 0x1 }));
+	public void testCheckerRecognizesDataset() throws Exception {
+		final File dir = tmp.newFolder("dataset");
+		writeDataset(dir, Arrays.asList(axes("channel", 0)), 4, 3);
 
-		assertTrue(checker.isFormat(stream));
+		final Checker checker = (Checker) format.createChecker();
+		assertTrue(checker.isFormat(new FileLocation(dir)));
 	}
 
-	/**
-	 * Test that {@link Metadata} doesn't allow instrument names longer than
-	 * {@link Metadata#INSTRUMENT_LENGTH}
-	 */
 	@Test
-	public void testSetInstrumentCutsLength() throws Exception {
-		final String instrument =
-			"Lentokonesuihkuturbiinimoottoriapumekaanikkoaliupseerioppilas";
-		// Cast io.scif.Metadata to FictionalImageFormat.Metadata
-		final Metadata metadata = (Metadata) format.createMetadata();
+	public void testCheckerRejectsPlainFolder() throws Exception {
+		final File dir = tmp.newFolder("not-a-dataset");
 
-		metadata.setInstrument(instrument);
-
-		assertEquals(Metadata.INSTRUMENT_LENGTH, metadata.getInstrument().length());
+		final Checker checker = (Checker) format.createChecker();
+		assertFalse(checker.isFormat(new FileLocation(dir)));
 	}
 
-	/** Test that image metadata is populated correctly */
 	@Test
-	public void testPopulateImageMetadata() throws Exception {
-		// SETUP
-		final Metadata metadata = (Metadata) format.createMetadata();
-		final AxisType[] types = { Axes.X, Axes.Y, Axes.Z };
-		final int[] dimensions = { 10, 11, 12 };
-		final int[] physicalDimensions = { 20, 26, 36 };
-		metadata.setWidth(dimensions[0]);
-		metadata.setPhysicalWidth(physicalDimensions[0]);
-		metadata.setHeight(dimensions[1]);
-		metadata.setPhysicalHeight(physicalDimensions[1]);
-		metadata.setDepth(dimensions[2]);
-		metadata.setPhysicalDepth(physicalDimensions[2]);
+	public void testParseMetadata() throws Exception {
+		final File dir = tmp.newFolder("dataset");
+		final int width = 8;
+		final int height = 6;
+		writeDataset(dir, Arrays.asList(axes("channel", 0), axes("channel", 1)),
+			width, height);
 
-		// EXECUTE
-		metadata.populateImageMetadata();
+		final Parser parser = (Parser) format.createParser();
+		final Metadata metadata = parser.parse(new FileLocation(dir));
 
-		// VERIFY
 		final ImageMetadata imgMeta = metadata.get(0);
-		assertTrue("Format should be little endian", imgMeta.isLittleEndian());
-		assertTrue("Order should be certain", imgMeta.isOrderCertain());
-		assertEquals("Should be 16 bits per pixel", 16, imgMeta.getBitsPerPixel());
-		assertEquals("Wrong pixel type", FormatTools.UINT16, imgMeta
-			.getPixelType());
-		assertEquals("Wrong number of planar axes", 2, imgMeta
-			.getPlanarAxisCount());
-		final List<CalibratedAxis> axes = imgMeta.getAxes();
-		assertEquals("Wrong number of axes", 3, axes.size());
-		for (int i = 0; i < axes.size(); i++) {
-			final CalibratedAxis axis = axes.get(i);
-			assertEquals("Axis is wrong type", types[i], axis.type());
-			assertEquals("Axis is wrong size", dimensions[i], imgMeta.getAxisLength(
-				axis));
-			assertEquals("Axis has wrong unit", Metadata.UNIT, axis.unit());
-			final double expectedScale = 1.0 * physicalDimensions[i] / dimensions[i];
-			assertEquals("Axis has wrong scale", expectedScale, axis.averageScale(0,
-				1), 1e-12);
+		assertTrue(imgMeta.isLittleEndian());
+		assertTrue(imgMeta.isOrderCertain());
+		assertEquals(2, imgMeta.getPlanarAxisCount());
+		assertEquals(FormatTools.UINT16, imgMeta.getPixelType());
+		assertEquals(16, imgMeta.getBitsPerPixel());
 
+		final List<CalibratedAxis> axes = imgMeta.getAxes();
+		assertEquals(3, axes.size());
+		assertEquals(Axes.X, axes.get(0).type());
+		assertEquals(Axes.Y, axes.get(1).type());
+		assertEquals(Axes.CHANNEL, axes.get(2).type());
+		assertEquals(width, imgMeta.getAxisLength(axes.get(0)));
+		assertEquals(height, imgMeta.getAxisLength(axes.get(1)));
+		assertEquals(2, imgMeta.getAxisLength(axes.get(2)));
+	}
+
+	@Test
+	public void testOpenPlaneReadsCorrectPixels() throws Exception {
+		final File dir = tmp.newFolder("dataset");
+		final int width = 5;
+		final int height = 4;
+		writeDataset(dir, Arrays.asList(axes("channel", 0), axes("channel", 1)),
+			width, height);
+
+		final Reader reader = (Reader) format.createReader();
+		reader.setSource(new FileLocation(dir));
+
+		final Interval bounds = Intervals.createMinSize(0, 0, width, height);
+		for (int planeIndex = 0; planeIndex < 2; planeIndex++) {
+			final ByteArrayPlane plane = reader.createPlane(bounds);
+			reader.openPlane(0, planeIndex, plane, bounds, new SCIFIOConfig());
+
+			final short[] actual = new short[width * height];
+			ByteBuffer.wrap(plane.getBytes()).order(ByteOrder.LITTLE_ENDIAN)
+				.asShortBuffer().get(actual);
+
+			final short[] expected = new short[width * height];
+			Arrays.fill(expected, (short) (100 * (planeIndex + 1)));
+			assertArrayEquals(expected, actual);
 		}
 	}
 
-	/** Test that metadata from a FIF file header is parsed correctly */
+	/**
+	 * Regression test: SCIFIO's {@code ImageMetadata.getAxesLengthsNonPlanar()}
+	 * silently trims trailing axes whose length is 1. Here "time" (the
+	 * trailing present axis, per {@code AXIS_ORDER}) has only one distinct
+	 * value, which used to make {@code Reader.openPlane} compute the wrong
+	 * axes for every plane (or throw {@code ArrayIndexOutOfBoundsException}).
+	 */
 	@Test
-	public void testTypedParse() throws Exception {
-		// SETUP
-		final int width = 12;
-		final int height = 13;
-		final int depth = 14;
-		final int physicalWidth = 24;
-		final int physicalHeight = 26;
-		final int physicalDepth = 28;
-		final int date = 21122012;
-		final String instrument = "Initech microscope  ";
-		final double excitation = 0.12345;
-		// Bytes in a plane = w * h * 2B (16-bits per pixel)
-		final long planeSize = width * height * 2;
-		// Create a mock FIF file
-		final ByteBuffer buffer = ByteBuffer.allocate(HEADER_LENGTH);
-		buffer.order(ByteOrder.LITTLE_ENDIAN);
-		// Move to start of metadata (after FIF identifier)
-		buffer.position(FIF_ID.length);
-		// Write data to mock file
-		buffer.putInt(width);
-		buffer.putInt(height);
-		buffer.putInt(depth);
-		buffer.putInt(physicalWidth);
-		buffer.putInt(physicalHeight);
-		buffer.putInt(physicalDepth);
-		buffer.putInt(date);
-		buffer.put(instrument.getBytes());
-		buffer.putDouble(excitation);
-		final DataHandle<Location> stream = dataHandleService.create(new BytesLocation(
-			buffer.array()));
-		final SCIFIOConfig config = new SCIFIOConfig();
-		final Metadata metadata = new Metadata();
+	public void testOpenPlaneWithTrailingSingletonAxis() throws Exception {
+		final File dir = tmp.newFolder("dataset");
+		final int width = 4;
+		final int height = 3;
+		// z varies (0, 1), but time is always 0 - a single-timepoint dataset.
+		writeDataset(dir, Arrays.asList(axes("z", 0, "time", 0), axes("z", 1,
+			"time", 0)), width, height);
 
-		// EXERCISE
-		parser.typedParse(stream, metadata, config);
-		metadata.populateImageMetadata();
-
-		// VERIFY
-		assertEquals("Width parsed incorrectly", width, metadata.getWidth());
-		assertEquals("Height parsed incorrectly", height, metadata.getHeight());
-		assertEquals("Depth parsed incorrectly", depth, metadata.getDepth());
-		assertEquals("Physical width parsed incorrectly", physicalWidth, metadata
-			.getPhysicalWidth());
-		assertEquals("Physical height parsed incorrectly", physicalHeight, metadata
-			.getPhysicalHeight());
-		assertEquals("Physical depth parsed incorrectly", physicalDepth, metadata
-			.getPhysicalDepth());
-		assertEquals("Date parsed incorrectly", LocalDate.of(2012, 12, 21), metadata
-			.getAcquisitionDate());
-		assertEquals("Instrument parsed incorrectly", instrument.trim(), metadata
-			.getInstrument());
-		assertEquals("Excitation level parsed incorrectly", excitation, metadata
-			.getExcitationLevel(), 1e-12);
-		assertEquals("Plane size incorrect", planeSize, metadata.getPlaneSize());
-	}
-
-	// Not testing Reader since its pretty much just calls to existing
-	// functionality
-	@Test
-	public void testOpenPlane() throws Exception {
-		// SETUP
-		final int width = 10;
-		final int height = 10;
-		final int depth = 3;
-		final int planeBytes = width * height * 2;
-		final int imageBytes = depth * planeBytes;
-		final Interval bounds = Intervals.createMinSize(0, 0, 0, width, height,
-			depth);
-		// Create a plane where the image data is read
-		final ByteArrayPlane plane = new ByteArrayPlane();
-		plane.setData(new byte[planeBytes]);
-		// Create a data handle to simulate an image file
-		final ByteBuffer buffer = ByteBuffer.allocate(HEADER_LENGTH + imageBytes);
-		buffer.order(ByteOrder.LITTLE_ENDIAN);
-		buffer.position(FIF_ID.length);
-		// We only need image dimensions metadata for this test
-		buffer.putInt(width);
-		buffer.putInt(height);
-		buffer.putInt(depth);
-		final DataHandle<Location> stream = dataHandleService.create(new BytesLocation(
-			buffer.array()));
-		// Cast io.scif.Reader to FictionalImageFormat.Reader
 		final Reader reader = (Reader) format.createReader();
-		reader.setSource(stream);
+		reader.setSource(new FileLocation(dir));
 
-		// EXECUTE
-		// Read the second plane from the stream
-		reader.openPlane(0, 1, plane, bounds, new SCIFIOConfig());
+		final Interval bounds = Intervals.createMinSize(0, 0, width, height);
+		for (int planeIndex = 0; planeIndex < 2; planeIndex++) {
+			final ByteArrayPlane plane = reader.createPlane(bounds);
+			reader.openPlane(0, planeIndex, plane, bounds, new SCIFIOConfig());
 
-		// VERIFY
-		// Test if the stream has advanced to the correct position, i.e. if the
-		// plane was read from the correct position in the file
-		assertEquals(
-			"Position of stream incorrect: should point to the beginning of the 3rd slice",
-			HEADER_LENGTH + 2 * planeBytes, stream.offset());
+			final short[] actual = new short[width * height];
+			ByteBuffer.wrap(plane.getBytes()).order(ByteOrder.LITTLE_ENDIAN)
+				.asShortBuffer().get(actual);
+
+			final short[] expected = new short[width * height];
+			Arrays.fill(expected, (short) (100 * (planeIndex + 1)));
+			assertArrayEquals(expected, actual);
+		}
 	}
 
 	@Test
-	public void testWriteHeader() throws Exception {
-		// SETUP
-		// Create an instance of Metadata
-		final Metadata meta = (Metadata) format.createMetadata();
-		meta.setWidth(12);
-		meta.setHeight(13);
-		meta.setDepth(14);
-		meta.setPhysicalWidth(24);
-		meta.setPhysicalHeight(26);
-		meta.setPhysicalDepth(27);
-		meta.setAcquisitionDate(21122012);
-		meta.setInstrument("Initech microscope  ");
-		meta.setExcitationLevel(0.12345);
-		meta.populateImageMetadata();
-		// Create an output handle for the Writer to write into
-		final DataHandle<Location> handle = dataHandleService.create(new BytesLocation(0));
-		final SCIFIOConfig config = new SCIFIOConfig();
-		// Create an instance of Writer
-		final Writer writer = (Writer) format.createWriter();
-		writer.setMetadata(meta);
+	public void testMissingPlaneReturnsBlankImage() throws Exception {
+		final File dir = tmp.newFolder("dataset");
+		final int width = 4;
+		final int height = 4;
+		// channel x time, but never write (channel=1, time=1)
+		writeDataset(dir, Arrays.asList(axes("channel", 0, "time", 0), axes(
+			"channel", 1, "time", 0), axes("channel", 0, "time", 1)), width,
+			height);
 
-		// EXECUTE
-		writer.setDest(handle, 0, config);
+		final Reader reader = (Reader) format.createReader();
+		reader.setSource(new FileLocation(dir));
 
-		// VERIFY
-		// Seek to the beginning of metadata (after file identifier)
-		handle.seek(FIF_ID.length);
-		assertEquals("Width written incorrectly", meta.getWidth(), handle
-			.readInt());
-		assertEquals("Height written incorrectly", meta.getHeight(), handle
-			.readInt());
-		assertEquals("Depth written incorrectly", meta.getDepth(), handle
-			.readInt());
-		assertEquals("Physical width written incorrectly", meta.getPhysicalWidth(),
-			handle.readInt());
-		assertEquals("Physical height written incorrectly", meta
-			.getPhysicalHeight(), handle.readInt());
-		assertEquals("Physical depth written incorrectly", meta.getPhysicalDepth(),
-			handle.readInt());
-		assertEquals("Date written incorrectly", meta.getDateInt(), handle
-			.readInt());
-		byte[] bytes = new byte[Metadata.INSTRUMENT_LENGTH];
-		handle.read(bytes);
-		assertEquals(meta.getPaddedInstrument(), new String(bytes));
-		assertEquals(meta.getExcitationLevel(), handle.readDouble(), 1e-15);
+		// channel varies fastest, so (channel=1, time=1) is raster index 3
+		final Interval bounds = Intervals.createMinSize(0, 0, width, height);
+		final ByteArrayPlane plane = reader.createPlane(bounds);
+		reader.openPlane(0, 3, plane, bounds, new SCIFIOConfig());
+
+		final byte[] expected = new byte[width * height * 2];
+		assertArrayEquals(expected, plane.getBytes());
 	}
 
-	@Rule
-	public ExpectedException thrown = ExpectedException.none();
+	@Test(expected = FormatException.class)
+	public void testUnrecognizedAxisThrows() throws Exception {
+		final File dir = tmp.newFolder("dataset");
+		writeDataset(dir, Arrays.asList(axes("grid_row", 0)), 4, 4);
 
-	/**
-	 * Tests that the writePlane() method throws the correct {@link Exception} if
-	 * were trying to write an image tile instead of a whole plane
-	 */
-	@Test
-	public void testWritePlaneThrowsExceptionIfNotWholePlane() throws Exception {
-		// Setup the exception we expect
-		thrown.expect(FormatException.class);
-		thrown.expectMessage("FIF writer does not support writing image tiles");
-		// Setup the Writer to write an image
-		final Metadata meta = (Metadata) format.createMetadata();
-		final int width = 10;
-		meta.setWidth(width);
-		final int height = 10;
-		meta.setHeight(height);
-		final int depth = 1;
-		meta.setDepth(depth);
-		meta.populateImageMetadata();
-		final Writer writer = (Writer) format.createWriter();
-		writer.setMetadata(meta);
-		final DataHandle<Location> stream = dataHandleService.create(new BytesLocation(0));
-		final SCIFIOConfig config = new SCIFIOConfig();
-		final ByteArrayPlane plane = new ByteArrayPlane(meta.get(0),
-			Intervals.createMinSize(0, 0, 0, width, height, depth));
-		writer.setDest(stream, 0, config);
-
-		// This call should now throw the expected FormatException
-		writer.writePlane(0, 0, plane, Intervals.createMinSize(1, 1, 0, 5, 5, 0));
+		final Parser parser = (Parser) format.createParser();
+		parser.parse(new FileLocation(dir));
 	}
-
-	// Similarly we should test here that a FormatException is thrown if
-	// imageMetadata has an unsupported pixel type (omitted for brevity)
-
-	/**
-	 * Tests if {@link Translator} translates {@link ImageMetadata} correctly to
-	 * format specific {@link Metadata}
-	 * <p>
-	 * NB {@link Translator} isn't tested comprehensively, since we don't check if
-	 * it handles missing axes etc. correctly. Tests left out for brevity.
-	 * </p>
-	 */
-	@Test
-	public void testTranslateImageMetadata() throws Exception {
-		// SETUP
-		// Build a generic ImageMetadata by hand, with the same axis lengths,
-		// scales and units the old FakeFormat-based fixture used to produce
-		final ImageMetadata imageMeta = new DefaultImageMetadata();
-		imageMeta.setAxes(new DefaultLinearAxis(Axes.X, "mm", 0.5),
-			new DefaultLinearAxis(Axes.Y, "mm", 0.4), new DefaultLinearAxis(Axes.Z,
-				"mm", 0.3));
-		imageMeta.setAxisLengths(new long[] { 10, 11, 3 });
-		final List<ImageMetadata> source = Collections.singletonList(imageMeta);
-		final Metadata dest = (Metadata) format.createMetadata();
-		final Translator translator = new Translator();
-
-		// EXECUTE
-		// translateImageMetadata is package-visible (protected), so it can be
-		// called directly without a source io.scif.Metadata instance
-		translator.translateImageMetadata(source, dest);
-
-		// VERIFY
-		assertEquals("Width from ImageMetadata translated incorrectly", 10, dest
-			.getWidth());
-		assertEquals("Physical width from ImageMetadata translated incorrectly", 5,
-			dest.getPhysicalWidth());
-		assertEquals("Height from ImageMetadata translated incorrectly", 11, dest
-			.getHeight());
-		assertEquals("Physical height from ImageMetadata translated incorrectly", 4,
-			dest.getPhysicalHeight());
-		assertEquals("Depth from ImageMetadata translated incorrectly", 3, dest
-			.getDepth());
-		assertEquals("Physical depth from ImageMetadata translated incorrectly", 1,
-			dest.getPhysicalDepth());
-	}
-
 }

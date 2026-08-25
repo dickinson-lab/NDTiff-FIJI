@@ -12,10 +12,10 @@ repo. In short:
 
 - This started as a fork of `scifio/example-scifio-format`.
 - `NDTiffFormat.java`/`NDTiffFormatTest.java` (`src/main/java/io/scif/formats/`,
-  `src/test/java/io/scif/formats/`) are currently still the tutorial's
-  placeholder logic (a fictional ".fif" format), renamed but not yet
-  reimplemented for real NDTiff parsing. That reimplementation is the next
-  task — see "Next step" in PROGRESS.md.
+  `src/test/java/io/scif/formats/`) now contain real NDTiff-reading logic
+  (backed by Micro-Manager's `NDTiffStorage` library), not the tutorial's
+  placeholder ".fif" format anymore. It has **not yet been compiled or run**
+  — see "Next step" in PROGRESS.md for what to do first.
 - The project builds with Eclipse + m2e. After any pom.xml edit made outside
   Eclipse's own editor, refresh (F5) the project before Maven → Update
   Project, or Eclipse won't notice the change.
