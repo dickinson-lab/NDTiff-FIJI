@@ -210,6 +210,18 @@ version throws another "Required service is missing: ..."
 this tool, that's the same pattern - add the named service class to that
 list (its own `@Parameter` fields, if any, tell you whether it needs more).
 
+`NDTiffFormatTest.java` has the same issue for the same reason (its static
+`Context` field was a bare `new Context()` too), but needs a much shorter
+list - `DataHandleService` and `FormatService` only - since the tests call
+the Checker/Parser/Reader directly and never go through
+`DatasetIOService`/`ImgOpener`. One extra thing worth knowing for next time:
+`FormatService` isn't just a `DatasetIOService` dependency - it's needed
+by *every* SCIFIO plugin object, `Format` included, because they all extend
+`io.scif.AbstractSCIFIOPlugin`, which declares both `LogService` and
+`FormatService` as `@Parameter` fields. In `ManualOpen` this came for free
+as a transitive dependency of `DatasetIOService`; in the test it didn't,
+because nothing else in that shorter list pulls it in.
+
 ## Fixes applied to get here (pom.xml / build)
 
 - `maven.imagej.net` is dead (301-redirects to `maven.scijava.org`). The pom's

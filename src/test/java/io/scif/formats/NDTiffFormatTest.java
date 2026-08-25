@@ -14,6 +14,7 @@ import io.scif.ByteArrayPlane;
 import io.scif.FormatException;
 import io.scif.ImageMetadata;
 import io.scif.config.SCIFIOConfig;
+import io.scif.services.FormatService;
 import io.scif.util.FormatTools;
 
 import java.io.File;
@@ -37,6 +38,7 @@ import org.junit.Test;
 import org.junit.rules.TemporaryFolder;
 import org.micromanager.ndtiffstorage.NDTiffStorage;
 import org.scijava.Context;
+import org.scijava.io.handle.DataHandleService;
 import org.scijava.io.location.FileLocation;
 
 /**
@@ -50,7 +52,19 @@ import org.scijava.io.location.FileLocation;
  */
 public class NDTiffFormatTest {
 
-	private static final Context context = new Context();
+	// A bare `new Context()` eagerly instantiates every Service on the
+	// classpath, including SCIFIO's JAIIIOServiceImpl, which needs the JAI
+	// ImageIO/JPEG2000 jars from io.scif:scifio-jai-imageio - deliberately
+	// excluded from this project's pom.xml (see CLAUDE.md). DataHandleService
+	// is needed because every SCIFIO Checker/Parser/Reader gets one
+	// @Parameter-injected; FormatService because every SCIFIO plugin,
+	// Format included, extends AbstractSCIFIOPlugin, which needs one too
+	// (usually pulled in for free as a dependency of DatasetIOService, but
+	// these tests call the Checker/Parser/Reader directly and never touch
+	// DatasetIOService/ImgOpener, so it has to be requested explicitly -
+	// see ManualOpen/PROGRESS.md for the same pattern at a larger scale).
+	private static final Context context = new Context(
+		DataHandleService.class, FormatService.class);
 	private static final NDTiffFormat format = new NDTiffFormat();
 
 	@Rule
