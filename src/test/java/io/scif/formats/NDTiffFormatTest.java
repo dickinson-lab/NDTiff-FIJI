@@ -38,6 +38,7 @@ import org.junit.Test;
 import org.junit.rules.TemporaryFolder;
 import org.micromanager.ndtiffstorage.NDTiffStorage;
 import org.scijava.Context;
+import org.scijava.app.StatusService;
 import org.scijava.io.handle.DataHandleService;
 import org.scijava.io.location.FileLocation;
 
@@ -63,8 +64,10 @@ public class NDTiffFormatTest {
 	// these tests call the Checker/Parser/Reader directly and never touch
 	// DatasetIOService/ImgOpener, so it has to be requested explicitly -
 	// see ManualOpen/PROGRESS.md for the same pattern at a larger scale).
+	// StatusService is needed too, now that Reader.openPlane reports read
+	// progress through it.
 	private static final Context context = new Context(
-		DataHandleService.class, FormatService.class);
+		DataHandleService.class, FormatService.class, StatusService.class);
 	private static final NDTiffFormat format = new NDTiffFormat();
 
 	@Rule

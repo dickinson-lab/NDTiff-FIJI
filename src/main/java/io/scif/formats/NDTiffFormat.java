@@ -38,9 +38,11 @@ import net.imglib2.Interval;
 
 import org.micromanager.ndtiffstorage.EssentialImageMetadata;
 import org.micromanager.ndtiffstorage.NDTiffStorage;
+import org.scijava.app.StatusService;
 import org.scijava.io.handle.DataHandle;
 import org.scijava.io.location.FileLocation;
 import org.scijava.io.location.Location;
+import org.scijava.plugin.Parameter;
 import org.scijava.plugin.Plugin;
 
 /**
@@ -366,6 +368,9 @@ public class NDTiffFormat extends AbstractFormat {
 
 	public static class Reader extends ByteArrayReader<Metadata> {
 
+		@Parameter
+		private StatusService statusService;
+
 		@Override
 		protected String[] createDomainArray() {
 			return new String[] { FormatTools.LM_DOMAIN };
@@ -423,6 +428,18 @@ public class NDTiffFormat extends AbstractFormat {
 				lengths[i] = meta.getAxisValues(presentAxes.get(i)).size();
 			}
 			final long[] pos = FormatTools.rasterToPosition(lengths, planeIndex);
+
+			// ImgOpener never reports read progress on its own - it's up to each
+			// Reader to do it per plane. This is what actually drives the
+			// progress bar at the bottom of the main Fiji window (via
+			// imagej-legacy's bridge from StatusService to ij.IJ.showStatus/
+			// showProgress); without it, opening a many-plane dataset is silent.
+			long totalPlanes = 1;
+			for (final long length : lengths) {
+				totalPlanes *= length;
+			}
+			statusService.showStatus((int) planeIndex + 1, (int) totalPlanes,
+				"Reading plane " + (planeIndex + 1) + "/" + totalPlanes);
 
 			final HashMap<String, Object> axes = new HashMap<>();
 			for (int i = 0; i < presentAxes.size(); i++) {

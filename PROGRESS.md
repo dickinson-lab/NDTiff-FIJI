@@ -30,13 +30,14 @@ Plan (see chat history for full reasoning):
 
 `NDTiffFormat.java` now contains real NDTiff-reading logic (Metadata/
 Checker/Parser/Reader — no Writer/Translator, NDTiff is read-only for our
-purposes). It has **not been compiled or run yet** — this machine has no
-`mvn` on PATH, so everything below was cross-checked by hand against the
-actual dependency sources (scifio/scijava-common/imagej-common
-`-sources.jar` in `~/.m2/repository`, decompiled via `javap` where sources
-weren't present, plus NDStorage/AcqEngJ source pulled from GitHub) rather
-than compiled. Open this in Eclipse (F5, then Maven → Update Project) and
-build/run the tests before trusting it further.
+purposes). **It builds clean (`mvn package` via Eclipse's Run As → Maven
+build...), the JUnit suite passes, and it has been confirmed working in a
+real Fiji install** (`/Applications/Fiji/`, jars copied into its `jars/`
+folder — see "Installing into a real Fiji" below) against a real
+Micro-Manager-acquired dataset, including drag-and-drop. The debugging that
+got it there surfaced several real, non-obvious bugs/gaps - both in this
+plugin's own code and in the third-party `NDTiffStorage` library - recorded
+below so they don't have to be rediscovered.
 
 Design decisions made this session:
 
@@ -104,6 +105,15 @@ Design decisions made this session:
   `ImageMetadata` axes/lengths, pixel round-trip through `openPlane`, the
   missing-plane-returns-blank fallback, and the unrecognized-axis
   `FormatException`.
+- **Progress bar while loading**: `ImgOpener` never reports read progress on
+  its own - that per-plane loop has no `StatusService` calls anywhere in it,
+  regardless of format, so opening any many-plane dataset is silent unless
+  the `Reader` itself reports progress. `Reader` now has a `StatusService`
+  `@Parameter` and calls `showStatus(planeIndex + 1, totalPlanes, ...)` once
+  per `openPlane` call - `StatusService` is what `imagej-legacy` bridges to
+  the classic IJ1 status/progress bar at the bottom of the main Fiji window,
+  so this isn't a workaround, it's the normal mechanism, just something
+  every format has to opt into individually.
 - **Not yet done**: the >2GB virtual-stack-mode prompt. That's UI/opener
   glue that sits outside the SCIFIO Format itself (probably a check against
   `NDTiffStorage.getDataSetSize()` wired into whatever calls
@@ -180,6 +190,47 @@ Design decisions made this session:
   so `Metadata.close(boolean)` now nulls its own `storage` field right after
   calling `storage.close()`, making our side idempotent instead of relying
   on the library to tolerate a double close.
+
+## Installing into a real Fiji
+
+The dev/test Fiji install on this machine is `/Applications/Fiji/` (the
+`Fiji.app` inside it is just the thin macOS `.app` bundle wrapper - `jars/`,
+`plugins/`, `db.xml.gz` etc. all live directly under `/Applications/Fiji/`).
+Its bundled `scifio-0.46.0.jar`/`imagej-common-2.1.1.jar` are exact version
+matches for what this project builds against, and `scijava-common-2.100.0
+.jar` is one minor version ahead of ours (2.99.0) - close enough to not be a
+concern. It also already ships `scifio-jai-imageio-1.1.1.jar`, confirming
+the "permanently broken artifact" problem (see pom.xml notes above) is
+specific to fetching that artifact from Maven, not the jar itself.
+
+To install: build with `mvn package` (via Eclipse's Run As → Maven build...
+- see "gotchas" below for why a plain Eclipse JAR export isn't enough), then
+copy exactly three jars into `/Applications/Fiji/jars/`:
+`target/NDTiff-FIJI-0.1.jar` plus the two new dependencies Fiji doesn't
+already have, `NDTiffStorage-2.18.4.jar` and `MMCoreJ-10.1.1.0.jar` (both
+from `~/.m2/repository/org/micro-manager/...`). Do **not** copy
+scifio/scijava-common/imagej-common jars in - Fiji already has compatible
+versions, and a second copy risks duplicate-class conflicts. Fiji has to be
+fully quit and relaunched afterward (it won't pick up new jars/ contents
+otherwise). Confirmed working this session against a real
+Micro-Manager-acquired dataset via drag-and-drop.
+
+Maven build gotchas hit on this machine (both stem from the project living
+on an SMB-mounted network drive, `/Volumes/DICKINSON/...`):
+- Eclipse's **Coverage As → Maven build...** (as opposed to **Run As →
+  Maven build...**) auto-injects a JaCoCo `-javaagent` into the forked test
+  JVM. JaCoCo's agent calls `FileChannel.lock()` on its output file, which
+  network-mounted volumes typically don't support (`IOException: Operation
+  not supported`), crashing the forked JVM before any test runs. Fix: use
+  Run As, not Coverage As; or if JaCoCo is wired in some other way, add
+  `-Djacoco.skip=true` to the Maven goals.
+- macOS AppleDouble `._*` files (see the NDTiffStorage note above) can
+  reappear under `target/` from the build itself, not just from Finder
+  touching `src/`, and will crash things again. `defaults write
+  com.apple.desktopservices DSDontWriteNetworkStores true` (then
+  unmount/remount, or log out and back in) stops macOS writing new ones;
+  existing ones still need `find "<project dir>" -name '._*' -type f
+  -delete` (or `dot_clean`) to clear out.
 
 ## Debugging with ManualOpen
 
