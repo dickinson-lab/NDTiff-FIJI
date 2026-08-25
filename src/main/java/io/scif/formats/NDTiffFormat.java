@@ -17,8 +17,6 @@ import io.scif.ImageMetadata;
 import io.scif.Plane;
 import io.scif.config.SCIFIOConfig;
 import io.scif.gui.BufferedImageReader;
-import io.scif.io.RandomAccessInputStream;
-import io.scif.io.RandomAccessOutputStream;
 import io.scif.util.FormatTools;
 import io.scif.util.SCIFIOMetadataTools;
 
@@ -33,7 +31,10 @@ import net.imagej.axis.Axes;
 import net.imagej.axis.AxisType;
 import net.imagej.axis.CalibratedAxis;
 import net.imagej.axis.DefaultLinearAxis;
+import net.imglib2.Interval;
 
+import org.scijava.io.handle.DataHandle;
+import org.scijava.io.location.Location;
 import org.scijava.plugin.Plugin;
 
 /**
@@ -75,7 +76,7 @@ import org.scijava.plugin.Plugin;
 // The Plugin annotation allows the format to be discovered automatically -
 // satisfying the first role of the Format
 @Plugin(type = Format.class)
-public class FictionalImageFormat extends AbstractFormat {
+public class NDTiffFormat extends AbstractFormat {
 
 	/** A byte sequence which identifies a FIF file */
 	public static final byte[] FIF_ID = { 0xC, 0x0, 0xF, 0xF, 0xE, 0xE };
@@ -383,39 +384,39 @@ public class FictionalImageFormat extends AbstractFormat {
 		/**
 		 * In this method we populate the given Metadata object
 		 *
-		 * @param stream A binary stream pointing to a FIF image
+		 * @param handle A binary data handle pointing to a FIF image
 		 * @param meta A new instance of the format's {@link Metadata}
 		 * @param config The current configuration of the environment. It has a
 		 *          number of configuration options you may want to check
-		 * @throws IOException Thrown if there's an error in reading the stream
+		 * @throws IOException Thrown if there's an error in reading the handle
 		 */
 		@Override
-		protected void typedParse(RandomAccessInputStream stream, Metadata meta,
+		protected void typedParse(DataHandle<Location> handle, Metadata meta,
 			SCIFIOConfig config) throws IOException, FormatException
 		{
-			// Because FIF is little endian we need to read the stream in that
+			// Because FIF is little endian we need to read the handle in that
 			// order
-			stream.order(true);
-			// Set the stream to the start of the metadata, after the id
+			handle.setLittleEndian(true);
+			// Set the handle to the start of the metadata, after the id
 			// sequence
-			stream.seek(FIF_ID.length);
+			handle.seek(FIF_ID.length);
 			// Read the dimensions of the image. Each read advances the position
 			// in
-			// the stream by the number of bytes in the type, e.g. four in the
+			// the handle by the number of bytes in the type, e.g. four in the
 			// case
 			// of a 32-bit int.
-			meta.setWidth(stream.readInt());
-			meta.setHeight(stream.readInt());
-			meta.setDepth(stream.readInt());
-			meta.setPhysicalWidth(stream.readInt());
-			meta.setPhysicalHeight(stream.readInt());
-			meta.setPhysicalDepth(stream.readInt());
+			meta.setWidth(handle.readInt());
+			meta.setHeight(handle.readInt());
+			meta.setDepth(handle.readInt());
+			meta.setPhysicalWidth(handle.readInt());
+			meta.setPhysicalHeight(handle.readInt());
+			meta.setPhysicalDepth(handle.readInt());
 			// Read the date saved as an integer
-			meta.setAcquisitionDate(stream.readInt());
+			meta.setAcquisitionDate(handle.readInt());
 			// Read the name of the instrument used
-			meta.setInstrument(stream.readString(Metadata.INSTRUMENT_LENGTH));
+			meta.setInstrument(handle.readString(Metadata.INSTRUMENT_LENGTH));
 			// Read the excitation level
-			meta.setExcitationLevel(stream.readDouble());
+			meta.setExcitationLevel(handle.readDouble());
 
 			// If true, then image will be displayed by mapping pixel values in
 			// the
@@ -450,7 +451,7 @@ public class FictionalImageFormat extends AbstractFormat {
 	 * However, if your format embeds an identifying flag - e.g. a magic string or
 	 * number - then it should override {@link AbstractChecker#suffixSufficient},
 	 * {@link AbstractChecker#suffixNecessary} and
-	 * {@link AbstractChecker#isFormat(RandomAccessInputStream)} as appropriate.
+	 * {@link AbstractChecker#isFormat(DataHandle)} as appropriate.
 	 * </p>
 	 */
 	public static class Checker extends AbstractChecker {
@@ -458,7 +459,7 @@ public class FictionalImageFormat extends AbstractFormat {
 		/**
 		 * By default, this method returns true, indicating that extension match
 		 * alone is sufficient to determine compatibility. If this method returns
-		 * false, then the {@link #isFormat(RandomAccessInputStream)} method will
+		 * false, then the {@link #isFormat(DataHandle)} method will
 		 * need to be checked.
 		 */
 		@Override
@@ -470,8 +471,8 @@ public class FictionalImageFormat extends AbstractFormat {
 		 * If suffixSufficient returns true, this method has no meaning. Otherwise
 		 * if this method returns true (the default) then the extension will have to
 		 * match in addition to the result of
-		 * {@link #isFormat(RandomAccessInputStream)} If this returns false, then
-		 * {@link #isFormat(RandomAccessInputStream)} is solely responsible for
+		 * {@link #isFormat(DataHandle)} If this returns false, then
+		 * {@link #isFormat(DataHandle)} is solely responsible for
 		 * determining compatibility.
 		 */
 		@Override
@@ -486,7 +487,7 @@ public class FictionalImageFormat extends AbstractFormat {
 		 * appropriate.
 		 */
 		@Override
-		public boolean isFormat(final RandomAccessInputStream stream)
+		public boolean isFormat(final DataHandle<Location> stream)
 			throws IOException
 		{
 			// A FIF file starts with the byte sequence 0xC, 0x0, 0xF, 0xF, 0xE,
@@ -530,32 +531,32 @@ public class FictionalImageFormat extends AbstractFormat {
 		 * object by reading from the specified image and plane indices in the
 		 * underlying image source.
 		 * <p>
-		 * planeMin and planeMax are dimensional indices determining the requested
-		 * sub-region offsets into the specified plane. They correspond to image
-		 * dimensions if the format uses relatively small images. However SCIFIO can
-		 * also open very large images in tiles if they wouldn't fit memory
-		 * otherwise. A tile is a sub-region of a slice in the image. In principle
-		 * opening an image in tiles corresponds to opening a "virtual stack" in
-		 * ImageJ1.
+		 * {@code bounds} is an {@link Interval} determining the requested
+		 * sub-region offsets and size into the specified plane. It corresponds to
+		 * image dimensions if the format uses relatively small images. However
+		 * SCIFIO can also open very large images in tiles if they wouldn't fit
+		 * memory otherwise. A tile is a sub-region of a slice in the image. In
+		 * principle opening an image in tiles corresponds to opening a "virtual
+		 * stack" in ImageJ1.
 		 * </p>
 		 */
 		@Override
 		public ByteArrayPlane openPlane(int imageIndex, long planeIndex,
-			ByteArrayPlane plane, long[] planeMin, long[] planeMax,
+			ByteArrayPlane plane, Interval bounds,
 			SCIFIOConfig config) throws FormatException, IOException
 		{
-			final RandomAccessInputStream stream = getStream();
-			// Set the stream's position to the start of the plane's image data
+			final DataHandle<Location> handle = getHandle();
+			// Set the handle's position to the start of the plane's image data
 			// so
 			// that bytes are read from to correct index
-			stream.seek(HEADER_LENGTH + planeIndex * getMetadata().planeSize);
+			handle.seek(HEADER_LENGTH + planeIndex * getMetadata().planeSize);
 			// If your image format has unencoded data, the easiest thing to do
 			// is
 			// to use the existing readPlane implementations.
 			// See e.g. io.scif.formats.PCXFormat or JPEGFormat for examples how
 			// to
 			// read encoded or compressed image data.
-			return readPlane(stream, imageIndex, planeMin, planeMax, plane);
+			return readPlane(handle, imageIndex, bounds, plane);
 		}
 	}
 
@@ -584,24 +585,24 @@ public class FictionalImageFormat extends AbstractFormat {
 		 * @param out The image source to write to.
 		 */
 		@Override
-		public void setDest(final RandomAccessOutputStream out,
+		public void setDest(final DataHandle<Location> out,
 			final int imageIndex, final SCIFIOConfig config) throws FormatException,
 			IOException
 		{
 			super.setDest(out, imageIndex, config);
-			// Ensure that nothing has been written to the stream yet, so that
+			// Ensure that nothing has been written to the handle yet, so that
 			// we
 			// can write the header
-			if (getStream().length() == 0) writeHeader();
+			if (getHandle().length() == 0) writeHeader();
 		}
 
 		/**
-		 * Writes the header of a FIF file to the output stream
+		 * Writes the header of a FIF file to the output handle
 		 */
 		private void writeHeader() throws IOException {
-			final RandomAccessOutputStream output = getStream();
-			output.order(true);
-			// Rewind the stream to file start
+			final DataHandle<Location> output = getHandle();
+			output.setLittleEndian(true);
+			// Rewind the handle to file start
 			output.seek(0);
 			// Write the metadata into the file header
 			final Metadata metadata = getMetadata();
@@ -623,17 +624,15 @@ public class FictionalImageFormat extends AbstractFormat {
 		 */
 		@Override
 		public void writePlane(int imageIndex, long planeIndex, Plane plane,
-			long[] planeMin, long[] planeMax) throws FormatException, IOException
+			Interval bounds) throws FormatException, IOException
 		{
 			final byte[] buffer = plane.getBytes();
 			// Ensure that the parameters are valid (throws an exception if not)
-			checkParams(imageIndex, planeIndex, buffer, planeMin, planeMax);
+			checkParams(imageIndex, planeIndex, buffer, bounds);
 
 			final Metadata meta = getMetadata();
 			// Check that we're writing an entire plane i.e. slice of the image
-			if (!SCIFIOMetadataTools.wholePlane(imageIndex, meta, planeMin,
-				planeMax))
-			{
+			if (!SCIFIOMetadataTools.wholePlane(imageIndex, meta, bounds)) {
 				throw new FormatException(
 					"FIF writer does not support writing image tiles");
 			}
@@ -645,13 +644,13 @@ public class FictionalImageFormat extends AbstractFormat {
 				throw new FormatException("Unsupported image type " + typeString);
 			}
 
-			// Calculate the starting byte of this plane in the output stream
-			final long width = planeMax[0];
-			final long height = planeMax[1];
+			// Calculate the starting byte of this plane in the output handle
+			final long width = bounds.dimension(0);
+			final long height = bounds.dimension(1);
 			final int bpp = FormatTools.getBytesPerPixel(type);
 			final long planeStart = planeIndex * width * height * bpp;
-			final RandomAccessOutputStream output = getStream();
-			output.order(true);
+			final DataHandle<Location> output = getHandle();
+			output.setLittleEndian(true);
 			// Seek to the start of this plane
 			output.seek(planeStart);
 			// Write all the bytes of the plane in the output

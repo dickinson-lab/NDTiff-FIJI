@@ -1,35 +1,37 @@
 
 package io.scif.formats;
 
-import static io.scif.formats.FictionalImageFormat.Checker;
-import static io.scif.formats.FictionalImageFormat.FIF_ID;
-import static io.scif.formats.FictionalImageFormat.HEADER_LENGTH;
-import static io.scif.formats.FictionalImageFormat.Metadata;
-import static io.scif.formats.FictionalImageFormat.Parser;
-import static io.scif.formats.FictionalImageFormat.Reader;
-import static io.scif.formats.FictionalImageFormat.Translator;
-import static io.scif.formats.FictionalImageFormat.Writer;
+import static io.scif.formats.NDTiffFormat.Checker;
+import static io.scif.formats.NDTiffFormat.FIF_ID;
+import static io.scif.formats.NDTiffFormat.HEADER_LENGTH;
+import static io.scif.formats.NDTiffFormat.Metadata;
+import static io.scif.formats.NDTiffFormat.Parser;
+import static io.scif.formats.NDTiffFormat.Reader;
+import static io.scif.formats.NDTiffFormat.Translator;
+import static io.scif.formats.NDTiffFormat.Writer;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
 
 import io.scif.ByteArrayPlane;
+import io.scif.DefaultImageMetadata;
 import io.scif.FormatException;
 import io.scif.ImageMetadata;
 import io.scif.config.SCIFIOConfig;
-import io.scif.io.ByteArrayHandle;
-import io.scif.io.RandomAccessInputStream;
-import io.scif.io.RandomAccessOutputStream;
 import io.scif.util.FormatTools;
 
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.time.LocalDate;
+import java.util.Collections;
 import java.util.List;
 
 import net.imagej.axis.Axes;
 import net.imagej.axis.AxisType;
 import net.imagej.axis.CalibratedAxis;
+import net.imagej.axis.DefaultLinearAxis;
+import net.imglib2.Interval;
+import net.imglib2.util.Intervals;
 
 import org.junit.AfterClass;
 import org.junit.BeforeClass;
@@ -37,20 +39,26 @@ import org.junit.Rule;
 import org.junit.Test;
 import org.junit.rules.ExpectedException;
 import org.scijava.Context;
+import org.scijava.io.handle.DataHandle;
+import org.scijava.io.handle.DataHandleService;
+import org.scijava.io.location.BytesLocation;
+import org.scijava.io.location.Location;
 
 /**
- * Tests for {@link FictionalImageFormat}
+ * Tests for {@link NDTiffFormat}
  *
  * @author Richard Domander (Royal Veterinary College, London)
  */
-public class FictionalImageFormatTest {
+public class NDTiffFormatTest {
 
 	// Create a context for testing, in a normal run it's automatically created by
 	// SciJava
 	private static final Context context = new Context();
+	private static final DataHandleService dataHandleService = context.getService(
+		DataHandleService.class);
 	private static final Checker checker = new Checker();
 	private static Parser parser;
-	private static final FictionalImageFormat format = new FictionalImageFormat();
+	private static final NDTiffFormat format = new NDTiffFormat();
 
 	@BeforeClass
 	public static void oneTimeSetup() throws Exception {
@@ -70,8 +78,8 @@ public class FictionalImageFormatTest {
 	/** Test that matching fails if file is too short */
 	@Test
 	public void testIsFormatFalseShortStream() throws Exception {
-		final RandomAccessInputStream stream = new RandomAccessInputStream(context,
-			new byte[] { 0xC, 0x0, 0xF });
+		final DataHandle<Location> stream = dataHandleService.create(new BytesLocation(
+			new byte[] { 0xC, 0x0, 0xF }));
 
 		assertFalse(checker.isFormat(stream));
 	}
@@ -79,8 +87,8 @@ public class FictionalImageFormatTest {
 	/** Test that matching fails if file has wrong start */
 	@Test
 	public void testIsFormatFalseIncorrectBytes() throws Exception {
-		final RandomAccessInputStream stream = new RandomAccessInputStream(context,
-			new byte[] { 0xC, 0x0, 0xF, 0xF, 0xE, 0xF });
+		final DataHandle<Location> stream = dataHandleService.create(new BytesLocation(
+			new byte[] { 0xC, 0x0, 0xF, 0xF, 0xE, 0xF }));
 
 		assertFalse(checker.isFormat(stream));
 	}
@@ -88,8 +96,8 @@ public class FictionalImageFormatTest {
 	@Test
 	public void testIsFormat() throws Exception {
 		// Add an extra byte to the end to check that it doesn't affect the result
-		final RandomAccessInputStream stream = new RandomAccessInputStream(context,
-			new byte[] { 0xC, 0x0, 0xF, 0xF, 0xE, 0xE, 0x1 });
+		final DataHandle<Location> stream = dataHandleService.create(new BytesLocation(
+			new byte[] { 0xC, 0x0, 0xF, 0xF, 0xE, 0xE, 0x1 }));
 
 		assertTrue(checker.isFormat(stream));
 	}
@@ -182,8 +190,8 @@ public class FictionalImageFormatTest {
 		buffer.putInt(date);
 		buffer.put(instrument.getBytes());
 		buffer.putDouble(excitation);
-		final RandomAccessInputStream stream = new RandomAccessInputStream(context,
-			buffer.array());
+		final DataHandle<Location> stream = dataHandleService.create(new BytesLocation(
+			buffer.array()));
 		final SCIFIOConfig config = new SCIFIOConfig();
 		final Metadata metadata = new Metadata();
 
@@ -220,12 +228,12 @@ public class FictionalImageFormatTest {
 		final int depth = 3;
 		final int planeBytes = width * height * 2;
 		final int imageBytes = depth * planeBytes;
-		final long[] planeMin = { 0, 0, 0 };
-		final long[] planeMax = { width, height, depth };
+		final Interval bounds = Intervals.createMinSize(0, 0, 0, width, height,
+			depth);
 		// Create a plane where the image data is read
-		final ByteArrayPlane plane = new ByteArrayPlane(context);
+		final ByteArrayPlane plane = new ByteArrayPlane();
 		plane.setData(new byte[planeBytes]);
-		// Create an input stream to simulate an image file
+		// Create a data handle to simulate an image file
 		final ByteBuffer buffer = ByteBuffer.allocate(HEADER_LENGTH + imageBytes);
 		buffer.order(ByteOrder.LITTLE_ENDIAN);
 		buffer.position(FIF_ID.length);
@@ -233,22 +241,22 @@ public class FictionalImageFormatTest {
 		buffer.putInt(width);
 		buffer.putInt(height);
 		buffer.putInt(depth);
-		final RandomAccessInputStream stream = new RandomAccessInputStream(context,
-			buffer.array());
+		final DataHandle<Location> stream = dataHandleService.create(new BytesLocation(
+			buffer.array()));
 		// Cast io.scif.Reader to FictionalImageFormat.Reader
 		final Reader reader = (Reader) format.createReader();
 		reader.setSource(stream);
 
 		// EXECUTE
 		// Read the second plane from the stream
-		reader.openPlane(0, 1, plane, planeMin, planeMax, new SCIFIOConfig());
+		reader.openPlane(0, 1, plane, bounds, new SCIFIOConfig());
 
 		// VERIFY
 		// Test if the stream has advanced to the correct position, i.e. if the
 		// plane was read from the correct position in the file
 		assertEquals(
 			"Position of stream incorrect: should point to the beginning of the 3rd slice",
-			HEADER_LENGTH + 2 * planeBytes, stream.getFilePointer());
+			HEADER_LENGTH + 2 * planeBytes, stream.offset());
 	}
 
 	@Test
@@ -266,17 +274,15 @@ public class FictionalImageFormatTest {
 		meta.setInstrument("Initech microscope  ");
 		meta.setExcitationLevel(0.12345);
 		meta.populateImageMetadata();
-		// Create an output stream for the Writer to write into
-		final ByteArrayHandle handle = new ByteArrayHandle();
-		final RandomAccessOutputStream stream = new RandomAccessOutputStream(
-			handle);
+		// Create an output handle for the Writer to write into
+		final DataHandle<Location> handle = dataHandleService.create(new BytesLocation(0));
 		final SCIFIOConfig config = new SCIFIOConfig();
 		// Create an instance of Writer
 		final Writer writer = (Writer) format.createWriter();
 		writer.setMetadata(meta);
 
 		// EXECUTE
-		writer.setDest(stream, 0, config);
+		writer.setDest(handle, 0, config);
 
 		// VERIFY
 		// Seek to the beginning of metadata (after file identifier)
@@ -324,16 +330,14 @@ public class FictionalImageFormatTest {
 		meta.populateImageMetadata();
 		final Writer writer = (Writer) format.createWriter();
 		writer.setMetadata(meta);
-		final RandomAccessOutputStream stream = new RandomAccessOutputStream(
-			new ByteArrayHandle());
+		final DataHandle<Location> stream = dataHandleService.create(new BytesLocation(0));
 		final SCIFIOConfig config = new SCIFIOConfig();
-		final ByteArrayPlane plane = new ByteArrayPlane(context, meta.get(0),
-			new long[3], new long[] { width, height, depth });
+		final ByteArrayPlane plane = new ByteArrayPlane(meta.get(0),
+			Intervals.createMinSize(0, 0, 0, width, height, depth));
 		writer.setDest(stream, 0, config);
 
 		// This call should now throw the expected FormatException
-		writer.writePlane(0, 0, plane, new long[] { 1, 1, 0 }, new long[] { 5, 5,
-			0 });
+		writer.writePlane(0, 0, plane, Intervals.createMinSize(1, 1, 0, 5, 5, 0));
 	}
 
 	// Similarly we should test here that a FormatException is thrown if
@@ -350,19 +354,21 @@ public class FictionalImageFormatTest {
 	@Test
 	public void testTranslateImageMetadata() throws Exception {
 		// SETUP
-		// Create a file of FakeFormat with image metadata
-		final String fakeImage =
-			"16bit-unsigned&pixelType=uint16&indexed=false&planarDims=2&lengths=10,11,3&axes=X,Y,Z&scales=0.5,0.4,0.3&units=mm,mm,mm.fake";
-		final FakeFormat fakeFormat = new FakeFormat();
-		fakeFormat.setContext(context);
-		final FakeFormat.Parser fakeParser = (FakeFormat.Parser) fakeFormat
-			.createParser();
-		final FakeFormat.Metadata source = fakeParser.parse(fakeImage);
+		// Build a generic ImageMetadata by hand, with the same axis lengths,
+		// scales and units the old FakeFormat-based fixture used to produce
+		final ImageMetadata imageMeta = new DefaultImageMetadata();
+		imageMeta.setAxes(new DefaultLinearAxis(Axes.X, "mm", 0.5),
+			new DefaultLinearAxis(Axes.Y, "mm", 0.4), new DefaultLinearAxis(Axes.Z,
+				"mm", 0.3));
+		imageMeta.setAxisLengths(new long[] { 10, 11, 3 });
+		final List<ImageMetadata> source = Collections.singletonList(imageMeta);
 		final Metadata dest = (Metadata) format.createMetadata();
 		final Translator translator = new Translator();
 
 		// EXECUTE
-		translator.translate(source, dest);
+		// translateImageMetadata is package-visible (protected), so it can be
+		// called directly without a source io.scif.Metadata instance
+		translator.translateImageMetadata(source, dest);
 
 		// VERIFY
 		assertEquals("Width from ImageMetadata translated incorrectly", 10, dest

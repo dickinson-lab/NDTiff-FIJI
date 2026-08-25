@@ -7,20 +7,21 @@
 	<parent>
 		<groupId>org.scijava</groupId>
 		<artifactId>pom-scijava</artifactId>
-		<version>14.0.0</version>
+		<version>40.0.0</version>
 		<relativePath />
 	</parent>
+	
+	<groupId>org.utdickinsonlab</groupId>
+	<artifactId>NDTiff-FIJI</artifactId>
+	<version>0.1</version>
 
-	<artifactId>example-format</artifactId>
-	<version>1.0.0-SNAPSHOT</version>
-
-	<name>SCIFIO file format example</name>
-	<description>This project teaches you how to add a file format to SCIFIO</description>
-	<url>http://scif.io/</url>
+	<name>NDTiff Reader for FIJI</name>
+	<description>Opens Micro-Manager NDTiff files in FIJI</description>
+	<url>https://www.github.com/dickisnon-lab/</url>
 	<inceptionYear>2017</inceptionYear>
 	<organization>
-		<name>SCIFIO</name>
-		<url>http://scif.io/</url>
+		<name>Dickinson Lab, University of Texas at Austin</name>
+		<url>https://www.utdickinsonlab.org</url>
 	</organization>
 	<licenses>
 		<license>
@@ -37,9 +38,9 @@
 
 	<developers>
 		<developer>
-			<id>ctrueden</id>
-			<name>Curtis Rueden</name>
-			<url>http://imagej.net/User:Rueden</url>
+			<id>dickinson-lab</id>
+			<name>Daniel Dickinson</name>
+			<url>https://www.github.com/dickinson-lab</url>
 			<roles>
 				<role>founder</role>
 				<role>lead</role>
@@ -50,24 +51,10 @@
 				<role>maintainer</role>
 			</roles>
 		</developer>
-		<developer>
-            <id>rimadoma</id>
-            <name>Richard Domander</name>
-            <url>http://imagej.net/User:Rdom</url>
-			<roles>
-				<role>developer</role>
-				<role>debugger</role>
-				<role>reviewer</role>
-				<role>support</role>
-				<role>maintainer</role>
-			</roles>
-		</developer>
 	</developers>
 	<contributors>
 		<contributor>
-			<name>Mark Hiner</name>
-			<url>http://imagej.net/User:Hinerm</url>
-			<properties><id>hinerm</id></properties>
+			<name>None</name>
 		</contributor>
 	</contributors>
 
@@ -97,8 +84,8 @@
 
 	<repositories>
 		<repository>
-			<id>imagej.public</id>
-			<url>http://maven.imagej.net/content/groups/public</url>
+			<id>scijava.public</id>
+			<url>https://maven.scijava.org/content/groups/public</url>
 		</repository>
 	</repositories>
 
@@ -106,6 +93,12 @@
 		<dependency>
 			<groupId>io.scif</groupId>
 			<artifactId>scifio</artifactId>
+			<exclusions>
+				<exclusion>
+					<groupId>io.scif</groupId>
+					<artifactId>scifio-jai-imageio</artifactId>
+				</exclusion>
+			</exclusions>
 		</dependency>
 		<dependency>
 			<groupId>org.scijava</groupId>
