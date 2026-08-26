@@ -66,14 +66,6 @@ bundled in) - this is the same jar published in each
 [release](../../releases), and the one to copy into `jars/` per the
 Installation instructions above.
 
-See [PROGRESS.md](PROGRESS.md) for detailed development notes, design
-decisions, and known issues.
-
-## License
-
-Released under the [CC0 1.0 Universal license][cc0] - see
-[LICENSE.md](LICENSE.md).
-
 ## Author
 
 Daniel Dickinson ([Dickinson Lab][lab], University of Texas at Austin)
