@@ -15,6 +15,7 @@ import io.scif.util.FormatTools;
 
 import java.io.File;
 import java.io.IOException;
+import java.io.PrintStream;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.util.ArrayList;
@@ -362,12 +363,17 @@ public class NDTiffFormat extends AbstractFormat {
 			deleteAppleDoubleFiles(dir);
 
 			final NDTiffStorage storage;
+			final PrintStream realErr = System.err;
+			System.setErr(silencing(realErr));
 			try {
 				storage = new NDTiffStorage(dir.getAbsolutePath());
 			}
 			catch (final IOException e) {
 				throw new FormatException("Could not open NDTiff dataset at " + dir,
 					e);
+			}
+			finally {
+				System.setErr(realErr);
 			}
 			meta.setStorage(storage);
 
@@ -471,6 +477,42 @@ public class NDTiffFormat extends AbstractFormat {
 					child.delete();
 				}
 			}
+		}
+
+		/**
+		 * Message {@code NDTiffStorage}'s own read-existing-dataset constructor
+		 * unconditionally prints to {@code System.err} whenever the optional
+		 * {@code display_settings.txt} file can't be read - which is nearly
+		 * always, since that file is only written if the dataset was ever
+		 * displayed live in Micro-Manager's own viewer. This is a bug in that
+		 * library (confirmed by reading its source,
+		 * {@code NDTiffStorage.java}'s constructor around line 150): it
+		 * doesn't distinguish "file doesn't exist" (the normal case, nothing
+		 * wrong) from a real read/parse failure, and doesn't use the same
+		 * opt-in {@code debugLogger_} callback the rest of that class already
+		 * uses for diagnostics like this - it should be reported upstream
+		 * (github.com/micro-manager/NDStorage), but until/unless that's fixed
+		 * there, this stays here.
+		 */
+		private static final String DISPLAY_SETTINGS_WARNING =
+			"Couldn't read displaysettings";
+
+		/**
+		 * Wraps {@code out}, dropping only lines exactly matching
+		 * {@link #DISPLAY_SETTINGS_WARNING} and passing everything else through
+		 * unchanged - so this only silences that one known-benign message, not
+		 * any other output (from this library or anything else) that happens
+		 * to reach {@code System.err} during the same window.
+		 */
+		private static PrintStream silencing(final PrintStream out) {
+			return new PrintStream(out, true) {
+
+				@Override
+				public void println(final String line) {
+					if (DISPLAY_SETTINGS_WARNING.equals(line)) return;
+					super.println(line);
+				}
+			};
 		}
 	}
 

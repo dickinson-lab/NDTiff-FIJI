@@ -235,6 +235,35 @@ Design decisions made this session:
   so `Metadata.close(boolean)` now nulls its own `storage` field right after
   calling `storage.close()`, making our side idempotent instead of relying
   on the library to tolerate a double close.
+- **`NDTiffStorage` prints "Couldn't read displaysettings" to `System.err`
+  for basically every dataset**: another real upstream bug, not specific to
+  this plugin (the user also saw it from a separate MATLAB-based NDTiff
+  reader). Confirmed by reading `NDTiffStorage.java` source (downloaded
+  `NDTiffStorage-2.18.4-sources.jar`): the read-existing-dataset
+  constructor (`NDTiffStorage(String dir)`, around line 146) tries to read
+  an optional `display_settings.txt` (only written if the dataset was ever
+  displayed live in Micro-Manager's own viewer - true for essentially none
+  of this lab's datasets), and on *any* exception - including the totally
+  normal `NoSuchFileException` when that file doesn't exist - unconditionally
+  does `System.err.println("Couldn't read displaysettings")`. It doesn't use
+  the class's own opt-in `debugLogger_` callback (used everywhere else in
+  the file for exactly this kind of diagnostic), and doesn't distinguish
+  "file missing, nothing wrong" from "file present but corrupt, worth
+  knowing about." Worth a PR to `micro-manager/NDStorage`: check
+  `Files.exists(...)` first (or catch `NoSuchFileException` specifically)
+  and stay silent in that case, routing a real parse failure through
+  `debugLogger_` like the rest of the class does instead of a raw
+  `System.err.println`. Not something we can fix by forking (same
+  "vendoring the whole library for one bug" tradeoff as the AppleDouble
+  issue above) - worked around instead in `Parser.typedParse`: swaps
+  `System.err` for a filtering `PrintStream` (`Parser.silencing`) around
+  just the `new NDTiffStorage(...)` call, dropping only a line that matches
+  `Parser.DISPLAY_SETTINGS_WARNING` exactly and passing everything else
+  through unchanged - so this can't hide some other, unrelated error that
+  happens to print during that same window. Regression test:
+  `testParseSuppressesUpstreamDisplaySettingsWarning` (exercises the real
+  code path, since none of this project's synthetic test datasets ever
+  write a `display_settings.txt` either).
 
 ## Building a portable distribution
 
@@ -448,7 +477,16 @@ library source only):
    through `NDTiffIOPlugin.supportsOpen` first, which is easy to forget to
    update in step with the Checker (see the parenthetical in that note above
    for why).
+3. **Suppressing the upstream "Couldn't read displaysettings" warning** (see
+   the `NDTiffStorage` bug note above) - `Parser.silencing`/
+   `Parser.DISPLAY_SETTINGS_WARNING`, wrapped around the `new
+   NDTiffStorage(...)` call in `typedParse`. Covered by
+   `testParseSuppressesUpstreamDisplaySettingsWarning`, not yet run. Confirm
+   in a real Fiji install that the Console window no longer pops up/logs
+   that message when opening a dataset - and consider filing the suggested
+   fix upstream at `micro-manager/NDStorage` (see that note for what to
+   propose) so this workaround can eventually be dropped.
 
-Once both are confirmed, commit the pending changes (`NDTiffFormat.java`,
+Once all three are confirmed, commit the pending changes (`NDTiffFormat.java`,
 `NDTiffIOPlugin.java`, `NDTiffFormatTest.java`, `ManualOpen.java`,
 `pom.xml`).

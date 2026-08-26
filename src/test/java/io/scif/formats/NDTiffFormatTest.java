@@ -17,7 +17,9 @@ import io.scif.config.SCIFIOConfig;
 import io.scif.services.FormatService;
 import io.scif.util.FormatTools;
 
+import java.io.ByteArrayOutputStream;
 import java.io.File;
+import java.io.PrintStream;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.util.Arrays;
@@ -330,5 +332,37 @@ public class NDTiffFormatTest {
 
 		final Parser parser = (Parser) format.createParser();
 		parser.parse(new FileLocation(dir));
+	}
+
+	/**
+	 * Regression test for an upstream {@code NDTiffStorage} wart: its
+	 * read-existing-dataset constructor unconditionally prints
+	 * "Couldn't read displaysettings" to {@code System.err} whenever the
+	 * optional {@code display_settings.txt} file is missing - which it always
+	 * is for these test datasets (nothing here ever writes one), so this
+	 * exercises the real code path rather than a contrived one. Parser must
+	 * suppress exactly that message without swallowing anything else written
+	 * to {@code System.err} during the same call.
+	 */
+	@Test
+	public void testParseSuppressesUpstreamDisplaySettingsWarning()
+		throws Exception
+	{
+		final File dir = tmp.newFolder("dataset");
+		writeDataset(dir, Arrays.asList(axes("channel", 0)), 4, 3);
+
+		final PrintStream realErr = System.err;
+		final ByteArrayOutputStream captured = new ByteArrayOutputStream();
+		System.setErr(new PrintStream(captured));
+		try {
+			final Parser parser = (Parser) format.createParser();
+			parser.parse(new FileLocation(dir));
+		}
+		finally {
+			System.setErr(realErr);
+		}
+
+		assertFalse(captured.toString().contains(
+			"Couldn't read displaysettings"));
 	}
 }
