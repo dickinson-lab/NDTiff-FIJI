@@ -18,8 +18,9 @@ import org.scijava.plugin.Parameter;
 import org.scijava.plugin.Plugin;
 
 /**
- * Makes dragging-and-dropping an NDTiff dataset folder onto the main Fiji
- * window open it through {@link NDTiffFormat}.
+ * Makes dragging-and-dropping an NDTiff dataset folder - or a single one of
+ * its {@code *_NDTiffStack.tif} files - onto the main Fiji window open it
+ * through {@link NDTiffFormat}.
  * <p>
  * By default, Fiji's legacy drag-and-drop handler
  * ({@code net.imagej.legacy.plugin.DefaultLegacyOpener}) only calls into
@@ -47,12 +48,12 @@ public class NDTiffIOPlugin extends AbstractIOPlugin<Dataset> {
 	@Override
 	public boolean supportsOpen(final Location source) {
 		return source instanceof FileLocation && NDTiffFormat
-			.isNDTiffDirectory(((FileLocation) source).getFile());
+			.isNDTiffLocation(((FileLocation) source).getFile());
 	}
 
 	@Override
 	public boolean supportsOpen(final String source) {
-		return NDTiffFormat.isNDTiffDirectory(new File(source));
+		return NDTiffFormat.isNDTiffLocation(new File(source));
 	}
 
 	@Override

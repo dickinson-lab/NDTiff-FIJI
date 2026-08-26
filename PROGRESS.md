@@ -69,6 +69,26 @@ Design decisions made this session:
   (`AbstractParser.parse` has an explicit "Location-only" proxy-handle path
   for exactly this case), confirmed by reading `AbstractChecker`/
   `AbstractParser` source directly, not guessed.
+- **Opening/dragging a single stack `.tif` file, not just the dataset
+  folder**: a user may select or drag-and-drop one of the dataset's own
+  `*_NDTiffStack.tif` files instead of the enclosing folder. Detected by
+  `NDTiffFormat.ndtiffDatasetDirectoryForStackFile(File)`: the file's name
+  must end in `"NDTiffStack.tif"` (the exact suffix Micro-Manager's
+  `ResolutionLevel.createBaseFilename` always produces - verified by reading
+  that method's source) and an `NDTiff.index` file must sit next to it in
+  the same folder; if both hold, that folder is treated exactly as if it
+  had been the thing opened/dropped. If either check fails (e.g. a
+  coincidentally-named but unrelated `.tif`, or one with no `NDTiff.index`
+  next to it), it's rejected and falls through to Fiji's normal plain-TIFF
+  handling instead of being misidentified. This check is shared by all
+  three gatekeepers that need to agree on what counts as "an NDTiff
+  dataset" - `Checker.isFormat`, `Parser.typedParse` (which resolves the
+  file back to its folder before doing anything else), and
+  `NDTiffIOPlugin.supportsOpen` (the *eager* drag-and-drop gate, which runs
+  before SCIFIO's own `Checker` ever gets a chance - missing this one would
+  mean a dropped stack file falls through to `ij.plugin.FolderOpener`/plain
+  TIFF handling before this format is ever consulted, same class of bug the
+  "Drag-and-drop wiring" note below already covers for folders).
 - **Drag-and-drop wiring**: added `NDTiffIOPlugin.java`, a separate
   `@Plugin(type = IOPlugin.class, priority = Priority.HIGH, attrs =
   {@Attr(name = "eager")})`. This matters because Fiji's legacy
@@ -397,31 +417,38 @@ real bug; Eclipse/Maven's normal build handles it fine, which is also what
 
 ## Next step
 
-The >2GB virtual-stack-mode prompt (see above) has been confirmed working
-end-to-end: installed as a real Fiji plugin and tested against an actual
-over-2GB Micro-Manager-acquired dataset, the dialog appears and virtual-stack
-mode works.
+The >2GB virtual-stack-mode prompt, and the progress-bar-stays-stuck bug that
+initially came with it (see the `Metadata.virtualStack` flag above), have
+both been confirmed working end-to-end in a real Fiji install against an
+actual over-2GB Micro-Manager-acquired dataset. That closes out every item
+in the original goal (drag-and-drop, correct hyperstack dimensions, >2GB
+virtual-stack prompt) except for the two below, which are implemented but
+not yet built/verified.
 
-One bug turned up in that real-Fiji test: the per-plane progress bar (added
-for the sequential-load case, see below) stayed permanently visible in
-virtual-stack mode and jumped back and forth to whatever plane was most
-recently displayed, instead of disappearing once the dataset "finished
-loading" - because in virtual-stack mode there is no such thing; `openPlane`
-gets called on demand, indefinitely, one plane at a time, as the user scrolls
-the hyperstack, not as part of one sequential up-front read. Fixed by adding
-a `Metadata.virtualStack` flag, set by `Parser.typedParse` when the user
-accepts the virtual-stack prompt, and checked by `Reader.openPlane` to skip
-the `statusService.showStatus(...)` call entirely when set. Not covered by a
-regression test, for the same reason the dialog branch itself isn't (see
-above) - exercising it needs a real over-2GB on-disk dataset, and there's no
-mocking library in this project to fake `NDTiffStorage.getDataSetSize()`
-instead.
+Two things landed since, neither compiled/run yet (no `mvn` CLI on this
+machine - checked by hand against decompiled dependency jars/poms and
+library source only):
 
-Remaining before commit:
+1. **Portable distribution** (`maven-shade-plugin` in pom.xml) - see
+   "Building a portable distribution" above. Verify a `package` build
+   actually produces a jar with `NDTiffStorage`/`MMCoreJ` classes bundled in
+   (`jar tf target/NDTiff-FIJI-0.1.jar | grep micromanager`), and that
+   dropping just that one jar into a *clean* Fiji install's `jars/` folder
+   (i.e. one that's never had `NDTiffStorage-*.jar`/`MMCoreJ-*.jar` copied in
+   separately) still opens a dataset correctly.
+2. **Opening a single stack `.tif` file** (see
+   "Opening/dragging a single stack .tif file" above) -
+   `ndtiffDatasetDirectoryForStackFile` plus the three call sites that use it
+   (`Checker.isFormat`, `Parser.typedParse`, `NDTiffIOPlugin.supportsOpen`).
+   Four new `NDTiffFormatTest` cases cover it
+   (`testCheckerRecognizesStackFile`, `testCheckerRejectsStackFileNameWithoutIndex`,
+   `testCheckerRejectsUnrelatedTiffFile`, `testParseMetadataFromStackFile`)
+   but haven't actually been run. Also worth a real-Fiji check specifically
+   for drag-and-drop (as opposed to File > Open), since that path goes
+   through `NDTiffIOPlugin.supportsOpen` first, which is easy to forget to
+   update in step with the Checker (see the parenthetical in that note above
+   for why).
 
-1. Confirm the progress-bar fix above in a real Fiji install against the same
-   large dataset (fixed by reading source/reasoning, not yet observed).
-2. Commit the `NDTiffFormat.java`/`NDTiffFormatTest.java`/`ManualOpen.java`
-   changes once confirmed. At that point every item in the original goal
-   (drag-and-drop, correct hyperstack dimensions, >2GB virtual-stack prompt)
-   is done.
+Once both are confirmed, commit the pending changes (`NDTiffFormat.java`,
+`NDTiffIOPlugin.java`, `NDTiffFormatTest.java`, `ManualOpen.java`,
+`pom.xml`).

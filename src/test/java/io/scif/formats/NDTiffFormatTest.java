@@ -105,6 +105,14 @@ public class NDTiffFormatTest {
 		return storage;
 	}
 
+	/** Finds the dataset's stack file (e.g. {@code "test_NDTiffStack.tif"}). */
+	private static File findStackFile(final File dir) {
+		for (final File child : dir.listFiles()) {
+			if (child.getName().endsWith("NDTiffStack.tif")) return child;
+		}
+		throw new AssertionError("No *NDTiffStack.tif file found in " + dir);
+	}
+
 	private static HashMap<String, Object> axes(final String k1, final int v1) {
 		final HashMap<String, Object> axes = new HashMap<>();
 		axes.put(k1, v1);
@@ -136,6 +144,52 @@ public class NDTiffFormatTest {
 		assertFalse(checker.isFormat(new FileLocation(dir)));
 	}
 
+	/**
+	 * A user may open or drag-and-drop a single one of the dataset's own
+	 * {@code *_NDTiffStack.tif} files instead of the enclosing folder - the
+	 * Checker should still recognize the dataset in that case.
+	 */
+	@Test
+	public void testCheckerRecognizesStackFile() throws Exception {
+		final File dir = tmp.newFolder("dataset");
+		writeDataset(dir, Arrays.asList(axes("channel", 0)), 4, 3);
+
+		final Checker checker = (Checker) format.createChecker();
+		assertTrue(checker.isFormat(new FileLocation(findStackFile(dir))));
+	}
+
+	/**
+	 * A {@code .tif} file that merely happens to be named like an NDTiff stack
+	 * file, but isn't actually sitting next to an {@code NDTiff.index}, must
+	 * be rejected - it should fall through to Fiji's normal plain-TIFF
+	 * handling instead of being misidentified as an NDTiff dataset.
+	 */
+	@Test
+	public void testCheckerRejectsStackFileNameWithoutIndex() throws Exception {
+		final File dir = tmp.newFolder("not-a-dataset");
+		final File fakeStackFile = new File(dir, "SomeOther_NDTiffStack.tif");
+		assertTrue(fakeStackFile.createNewFile());
+
+		final Checker checker = (Checker) format.createChecker();
+		assertFalse(checker.isFormat(new FileLocation(fakeStackFile)));
+	}
+
+	/**
+	 * A plain {@code .tif} file (not matching the NDTiff stack file naming
+	 * convention at all) must be rejected even if an unrelated
+	 * {@code NDTiff.index} happens to sit in the same folder.
+	 */
+	@Test
+	public void testCheckerRejectsUnrelatedTiffFile() throws Exception {
+		final File dir = tmp.newFolder("dataset");
+		writeDataset(dir, Arrays.asList(axes("channel", 0)), 4, 3);
+		final File unrelated = new File(dir, "unrelated.tif");
+		assertTrue(unrelated.createNewFile());
+
+		final Checker checker = (Checker) format.createChecker();
+		assertFalse(checker.isFormat(new FileLocation(unrelated)));
+	}
+
 	@Test
 	public void testParseMetadata() throws Exception {
 		final File dir = tmp.newFolder("dataset");
@@ -162,6 +216,29 @@ public class NDTiffFormatTest {
 		assertEquals(width, imgMeta.getAxisLength(axes.get(0)));
 		assertEquals(height, imgMeta.getAxisLength(axes.get(1)));
 		assertEquals(2, imgMeta.getAxisLength(axes.get(2)));
+	}
+
+	/**
+	 * Parsing from the dataset's stack file directly (rather than the
+	 * enclosing folder) must resolve back to the same dataset and produce the
+	 * same metadata.
+	 */
+	@Test
+	public void testParseMetadataFromStackFile() throws Exception {
+		final File dir = tmp.newFolder("dataset");
+		final int width = 8;
+		final int height = 6;
+		writeDataset(dir, Arrays.asList(axes("channel", 0), axes("channel", 1)),
+			width, height);
+
+		final Parser parser = (Parser) format.createParser();
+		final Metadata metadata = parser.parse(new FileLocation(findStackFile(
+			dir)));
+
+		final ImageMetadata imgMeta = metadata.get(0);
+		assertEquals(width, imgMeta.getAxisLength(imgMeta.getAxes().get(0)));
+		assertEquals(height, imgMeta.getAxisLength(imgMeta.getAxes().get(1)));
+		assertEquals(2, imgMeta.getAxisLength(imgMeta.getAxes().get(2)));
 	}
 
 	@Test

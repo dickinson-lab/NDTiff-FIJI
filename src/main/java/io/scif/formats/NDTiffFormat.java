@@ -122,6 +122,39 @@ public class NDTiffFormat extends AbstractFormat {
 			.isFile();
 	}
 
+	/**
+	 * @param file Candidate file that might be one of an NDTiff dataset's own
+	 *        stack files, rather than the dataset folder itself - e.g. a user
+	 *        opening or drag-and-dropping a single {@code .tif} instead of the
+	 *        enclosing folder.
+	 * @return the dataset folder, if {@code file}'s name ends in
+	 *         {@code "NDTiffStack.tif"} and an {@code NDTiff.index} file sits
+	 *         next to it in the same folder; {@code null} otherwise (either
+	 *         {@code file} doesn't look like an NDTiff stack file, or its
+	 *         folder isn't actually part of a dataset - e.g. a stray/renamed
+	 *         TIFF that should just be opened as a plain TIFF, as Fiji
+	 *         normally would).
+	 */
+	static File ndtiffDatasetDirectoryForStackFile(final File file) {
+		if (file == null || !file.isFile()) return null;
+		if (!file.getName().endsWith("NDTiffStack.tif")) return null;
+		final File dir = file.getParentFile();
+		if (dir == null || !new File(dir, "NDTiff.index").isFile()) return null;
+		return dir;
+	}
+
+	/**
+	 * @param file Candidate dataset folder, or a single NDTiff stack file
+	 *        within one.
+	 * @return true if {@code file} is either an NDTiff dataset folder (see
+	 *         {@link #isNDTiffDirectory}) or one of its stack files (see
+	 *         {@link #ndtiffDatasetDirectoryForStackFile}).
+	 */
+	static boolean isNDTiffLocation(final File file) {
+		return isNDTiffDirectory(file) || ndtiffDatasetDirectoryForStackFile(
+			file) != null;
+	}
+
 	// *** REQUIRED COMPONENTS ***
 
 	public static class Metadata extends AbstractMetadata {
@@ -269,7 +302,10 @@ public class NDTiffFormat extends AbstractFormat {
 		/**
 		 * Ignores the byte-stream methods on {@code handle} entirely - for a
 		 * directory-based format there is no byte stream, only a
-		 * {@link Location} to inspect.
+		 * {@link Location} to inspect. Also accepts a single NDTiff stack
+		 * {@code .tif} file in place of the dataset folder (see
+		 * {@link NDTiffFormat#ndtiffDatasetDirectoryForStackFile}), so opening
+		 * or dragging-and-dropping just that one file still works.
 		 */
 		@Override
 		public boolean isFormat(final DataHandle<Location> handle)
@@ -277,7 +313,7 @@ public class NDTiffFormat extends AbstractFormat {
 		{
 			final Location loc = handle.get();
 			if (!(loc instanceof FileLocation)) return false;
-			return isNDTiffDirectory(((FileLocation) loc).getFile());
+			return isNDTiffLocation(((FileLocation) loc).getFile());
 		}
 	}
 
@@ -303,7 +339,14 @@ public class NDTiffFormat extends AbstractFormat {
 				throw new FormatException(
 					"NDTiff datasets must be opened from a local folder, not: " + loc);
 			}
-			final File dir = ((FileLocation) loc).getFile();
+			final File selected = ((FileLocation) loc).getFile();
+			// A user may open/drag-and-drop a single *_NDTiffStack.tif file
+			// instead of the dataset folder - resolve back to the folder in
+			// that case (see Checker.isFormat), so the rest of this method can
+			// treat this exactly as if the folder had been provided.
+			final File stackFileDir = ndtiffDatasetDirectoryForStackFile(
+				selected);
+			final File dir = stackFileDir != null ? stackFileDir : selected;
 
 			// NDTiffStorage does its own directory listing deep inside
 			// ResolutionLevel.openExistingDataSet(), with no filter hook exposed
