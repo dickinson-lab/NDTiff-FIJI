@@ -17,7 +17,7 @@
 
 	<name>NDTiff Reader for FIJI</name>
 	<description>Opens Micro-Manager NDTiff files in FIJI</description>
-	<url>https://www.github.com/dickisnon-lab/</url>
+	<url>https://www.github.com/dickinson-lab/</url>
 	<inceptionYear>2017</inceptionYear>
 	<organization>
 		<name>Dickinson Lab, University of Texas at Austin</name>

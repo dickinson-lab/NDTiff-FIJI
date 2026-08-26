@@ -1,31 +1,84 @@
-This project implements an example file format for [SCIFIO][1].
+# NDTiff-FIJI
 
-GETTING STARTED
----------------
+A [Fiji](https://fiji.sc)/ImageJ2 plugin (built on the [SCIFIO][scifio]
+framework) for opening [Micro-Manager](https://micro-manager.org) NDTiff
+datasets directly in Fiji - drag-and-drop an NDTiff dataset onto the main
+Fiji window and it opens as a correctly-dimensioned hyperstack, the same way
+Micro-Manager's own viewer would open it.
 
-This tutorials is heavily commented to explain the SCIFIO API.
-Simply running a given tutorial may not be meaningful; it is
-highly recommended to open the source files and follow the code
-step by step.
+## Features
 
-You can import these projects into your favorite IDE:
+- Drag-and-drop an NDTiff dataset folder - or a single one of its
+  `*_NDTiffStack.tif` files - onto the main Fiji window. `File > Open...`
+  works the same way.
+- Opens as a properly dimensioned hyperstack (Z / Channel / Time / Position
+  axes, as recorded in the dataset).
+- For datasets larger than 2GB, prompts to open as a virtual stack (loading
+  planes from disk on demand instead of reading the whole dataset into
+  memory), matching classic ImageJ's own large-TIFF behavior.
+- Shows read progress in Fiji's status bar while a dataset loads.
 
-  * Eclipse: File > Import > Existing Maven Projects
-  * NetBeans: File > Open Project
-  * IDEA: File > Open Project... (select pom.xml)
+### Limitations
 
-Or build and run from the command line:
+- Read-only - this plugin cannot create or write NDTiff datasets.
+- RGB NDTiff datasets are not currently supported and will fail to open
+  with an explicit error (this lab's data is all single-channel
+  fluorescence microscopy, so this path has never been implemented/tested).
 
-    mvn
-    mvn exec:java -Dexec.mainClass=io.scif.tutorials.T1aIntroToSCIFIO
-    
-LICENSING
----------
+## Installation
 
-To the extent possible under law, the developers have waived
-all copyright and related or neighboring rights to this tutorial code.
+1. Download `NDTiff-FIJI-<version>.jar` from the [Releases][releases] page.
+2. Copy it into your Fiji installation's `jars` folder.
+   - **Windows / Linux**: this is the `jars` folder directly inside your
+     `Fiji.app` folder.
+   - **macOS**: if Fiji shows up as a single `Fiji.app` application icon,
+     right-click it, choose **Show Package Contents**, and look for `jars`
+     inside. (On some macOS installs, `jars` instead sits as a sibling
+     folder next to `Fiji.app`, rather than inside it - either way, it's
+     the same `jars` folder Fiji itself uses.)
+3. Restart Fiji if it was already running - it only scans the `jars` folder
+   at startup.
 
-See the [CC0 1.0 Universal license][2] for details.
+No other setup is required: this jar already bundles the two non-Fiji
+libraries it depends on (Micro-Manager's `NDTiffStorage`/`MMCoreJ`), so it's
+a single-file install.
 
-[1]: http://loci.wisc.edu/software/scifio
-[2]: http://creativecommons.org/publicdomain/zero/1.0/
+## Usage
+
+Just drag an NDTiff dataset folder (or one of its `*_NDTiffStack.tif` files)
+onto the main Fiji window, or use `File > Open...` and select it. If the
+dataset is over 2GB, you'll be asked whether to open it as a virtual stack.
+
+## Building from source
+
+This project builds with Maven (developed against Eclipse + m2e - open it
+via `File > Import > Existing Maven Projects`, then use
+`Run As > Maven build...` with goal `package`):
+
+```
+mvn package
+```
+
+This produces a single self-contained `target/NDTiff-FIJI-<version>.jar`
+(SCIFIO/SciJava/ImageJ dependencies are left out, since every Fiji install
+already has compatible versions of those; only the non-Fiji dependencies are
+bundled in) - this is the same jar published in each
+[release](../../releases), and the one to copy into `jars/` per the
+Installation instructions above.
+
+See [PROGRESS.md](PROGRESS.md) for detailed development notes, design
+decisions, and known issues.
+
+## License
+
+Released under the [CC0 1.0 Universal license][cc0] - see
+[LICENSE.md](LICENSE.md).
+
+## Author
+
+Daniel Dickinson ([Dickinson Lab][lab], University of Texas at Austin)
+
+[scifio]: https://imagej.net/formats/scifio
+[cc0]: http://creativecommons.org/publicdomain/zero/1.0/
+[lab]: https://www.utdickinsonlab.org
+[releases]: https://github.com/dickinson-lab/NDTiff-FIJI/releases
