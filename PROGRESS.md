@@ -216,6 +216,48 @@ Design decisions made this session:
   calling `storage.close()`, making our side idempotent instead of relying
   on the library to tolerate a double close.
 
+## Building a portable distribution
+
+For distributing to other machines (mix of Mac/PC), pom.xml now uses
+`maven-shade-plugin` to produce a single self-contained jar instead of
+requiring three separate jars per machine:
+
+- `scifio`/`scijava-common`/`imagej-common` dependencies are `provided`
+  scope - present on the compile/test classpath (needed to build and run
+  this project's own tests) but deliberately left out of the packaged jar,
+  since every real Fiji install already has compatible versions of these
+  (copying a second set in risks duplicate-class conflicts - see
+  "Installing into a real Fiji" below).
+- `NDTiffStorage`/`MMCoreJ` stay at the default `compile` scope, since Fiji
+  does not bundle either of these.
+- `maven-shade-plugin`'s `shade` goal (bound to the `package` phase) bundles
+  everything that isn't `provided`/`test` scope directly into
+  `target/NDTiff-FIJI-<version>.jar` - so with the scope split above, it
+  picks up exactly `NDTiffStorage`+`MMCoreJ` and nothing else, no explicit
+  include/exclude filters needed. Verified by checking both dependencies'
+  own poms (`~/.m2/repository/org/micro-manager/.../*.pom`) - neither has
+  further transitive dependencies beyond each other, so those two jars are
+  the complete non-Fiji dependency set.
+- No relocation/shading of package names was needed - neither dependency's
+  classes collide with anything Fiji already ships, confirmed by checking
+  their jars' contents don't overlap with `io.scif`/`org.scijava`/
+  `net.imagej` packages.
+- `createDependencyReducedPom` is set `false` to stop the shade plugin from
+  writing a `dependency-reduced-pom.xml` file into the project root (a
+  known m2e/Eclipse-project-view annoyance, not needed here since this pom
+  isn't itself published as a dependency for anything else to resolve).
+
+Build with Eclipse's Run As → Maven build... using goal `package` (same as
+before - the shade plugin's `shade` goal is bound to that phase, so no
+separate step is needed). The resulting `target/NDTiff-FIJI-0.1.jar` is the
+one file to copy to another machine's Fiji `jars/` folder - see "Installing
+into a real Fiji" below. This has been checked by hand against the declared
+dependency poms and jar contents, but not yet run through an actual build
+(no `mvn` CLI on this machine, Eclipse + m2e only) - confirm in Eclipse that
+`package` completes and that the resulting jar's size/content
+(`jar tf target/NDTiff-FIJI-0.1.jar | grep micromanager` should list
+NDTiffStorage/MMCoreJ classes) look right before distributing it.
+
 ## Installing into a real Fiji
 
 The dev/test Fiji install on this machine is `/Applications/Fiji/` (the
@@ -230,12 +272,17 @@ specific to fetching that artifact from Maven, not the jar itself.
 
 To install: build with `mvn package` (via Eclipse's Run As → Maven build...
 - see "gotchas" below for why a plain Eclipse JAR export isn't enough), then
-copy exactly three jars into `/Applications/Fiji/jars/`:
-`target/NDTiff-FIJI-0.1.jar` plus the two new dependencies Fiji doesn't
-already have, `NDTiffStorage-2.18.4.jar` and `MMCoreJ-10.1.1.0.jar` (both
+copy the one shaded jar, `target/NDTiff-FIJI-0.1.jar`, into
+`/Applications/Fiji/jars/`. As of the `maven-shade-plugin` addition to
+pom.xml (see "Building a portable distribution" below), that single jar
+already has `NDTiffStorage`/`MMCoreJ` bundled in, replacing the older
+three-separate-jars install process (kept here for history: it used to also
+require copying `NDTiffStorage-2.18.4.jar` and `MMCoreJ-10.1.1.0.jar` in
 from `~/.m2/repository/org/micro-manager/...`). Do **not** copy
 scifio/scijava-common/imagej-common jars in - Fiji already has compatible
-versions, and a second copy risks duplicate-class conflicts. Fiji has to be
+versions, and a second copy risks duplicate-class conflicts (this is also
+why those three are `provided` scope in pom.xml - it keeps the shade plugin
+from bundling them). Fiji has to be
 fully quit and relaunched afterward (it won't pick up new jars/ contents
 otherwise). Confirmed working this session against a real
 Micro-Manager-acquired dataset via drag-and-drop.

@@ -90,9 +90,17 @@
 	</repositories>
 
 	<dependencies>
+		<!--
+		scifio/scijava-common/imagej-common are already bundled inside every
+		real Fiji install (see PROGRESS.md - copying a second set of these in
+		risks duplicate-class conflicts). `provided` scope keeps them on the
+		compile/test classpath (needed to build and run this project's own
+		tests) without pulling them into the shaded distribution jar below.
+		-->
 		<dependency>
 			<groupId>io.scif</groupId>
 			<artifactId>scifio</artifactId>
+			<scope>provided</scope>
 			<exclusions>
 				<exclusion>
 					<groupId>io.scif</groupId>
@@ -103,17 +111,21 @@
 		<dependency>
 			<groupId>org.scijava</groupId>
 			<artifactId>scijava-common</artifactId>
+			<scope>provided</scope>
 		</dependency>
 		<dependency>
 			<groupId>net.imagej</groupId>
 			<artifactId>imagej-common</artifactId>
+			<scope>provided</scope>
 		</dependency>
 
 		<!--
 		Real NDTiff reading. NDTiffStorage depends on MMCoreJ only for the
 		plain-data TaggedImage/JSONObject classes it uses as its pixel+metadata
 		carrier - no native/JNI code is loaded unless something actually
-		instantiates CMMCore, which this plugin never does.
+		instantiates CMMCore, which this plugin never does. Fiji does not
+		bundle either of these, so they stay at the default `compile` scope
+		and get packaged into the shaded distribution jar below.
 		-->
 		<dependency>
 			<groupId>org.micro-manager.ndtiffstorage</groupId>
@@ -149,6 +161,33 @@
 						</requireReleaseDeps>
 					</rules>
 				</configuration>
+			</plugin>
+
+			<!--
+			Bundles the non-Fiji dependencies (NDTiffStorage, MMCoreJ) directly
+			into target/NDTiff-FIJI-<version>.jar, so distributing this plugin to
+			another machine is a single-file copy into Fiji's jars/ folder
+			instead of three. scifio/scijava-common/imagej-common are `provided`
+			scope above specifically so the shade plugin's default behavior
+			(bundle everything that isn't provided/test scope) leaves them out -
+			Fiji already has compatible versions of those, and a second copy
+			risks duplicate-class conflicts (see PROGRESS.md).
+			-->
+			<plugin>
+				<groupId>org.apache.maven.plugins</groupId>
+				<artifactId>maven-shade-plugin</artifactId>
+				<version>3.5.1</version>
+				<executions>
+					<execution>
+						<phase>package</phase>
+						<goals>
+							<goal>shade</goal>
+						</goals>
+						<configuration>
+							<createDependencyReducedPom>false</createDependencyReducedPom>
+						</configuration>
+					</execution>
+				</executions>
 			</plugin>
 		</plugins>
 	</build>
