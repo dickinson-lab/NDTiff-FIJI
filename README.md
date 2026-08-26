@@ -66,11 +66,15 @@ bundled in) - this is the same jar published in each
 [release](../../releases), and the one to copy into `jars/` per the
 Installation instructions above.
 
+## License
+
+Released under the [MIT License][mit] - see [LICENSE.md](LICENSE.md).
+
 ## Author
 
 Daniel Dickinson ([Dickinson Lab][lab], University of Texas at Austin)
 
 [scifio]: https://imagej.net/formats/scifio
-[cc0]: http://creativecommons.org/publicdomain/zero/1.0/
+[mit]: https://opensource.org/license/mit/
 [lab]: https://www.utdickinsonlab.org
 [releases]: https://github.com/dickinson-lab/NDTiff-FIJI/releases
