@@ -41,6 +41,7 @@ import org.scijava.Context;
 import org.scijava.app.StatusService;
 import org.scijava.io.handle.DataHandleService;
 import org.scijava.io.location.FileLocation;
+import org.scijava.ui.UIService;
 
 /**
  * Tests for {@link NDTiffFormat}.
@@ -65,9 +66,11 @@ public class NDTiffFormatTest {
 	// DatasetIOService/ImgOpener, so it has to be requested explicitly -
 	// see ManualOpen/PROGRESS.md for the same pattern at a larger scale).
 	// StatusService is needed too, now that Reader.openPlane reports read
-	// progress through it.
+	// progress through it, and UIService because Parser now prompts about
+	// virtual-stack mode for large datasets.
 	private static final Context context = new Context(
-		DataHandleService.class, FormatService.class, StatusService.class);
+		DataHandleService.class, FormatService.class, StatusService.class,
+		UIService.class);
 	private static final NDTiffFormat format = new NDTiffFormat();
 
 	@Rule

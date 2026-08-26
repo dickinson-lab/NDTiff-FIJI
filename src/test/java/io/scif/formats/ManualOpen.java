@@ -15,6 +15,7 @@ import org.scijava.Context;
 import org.scijava.app.StatusService;
 import org.scijava.io.handle.DataHandleService;
 import org.scijava.io.location.FileLocation;
+import org.scijava.ui.UIService;
 
 /**
  * Manual debug entry point - not a test, not shipped in the plugin jar. Opens
@@ -51,7 +52,7 @@ public class ManualOpen {
 		final Context context = new Context(DatasetIOService.class,
 			DataHandleService.class, ImgUtilityService.class,
 			StatusService.class, PlaneConverterService.class,
-			InitializeService.class, FilePatternService.class);
+			InitializeService.class, FilePatternService.class, UIService.class);
 		try {
 			final DatasetIOService ioService = context.getService(
 				DatasetIOService.class);

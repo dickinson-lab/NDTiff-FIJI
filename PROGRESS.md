@@ -114,10 +114,35 @@ Design decisions made this session:
   the classic IJ1 status/progress bar at the bottom of the main Fiji window,
   so this isn't a workaround, it's the normal mechanism, just something
   every format has to opt into individually.
-- **Not yet done**: the >2GB virtual-stack-mode prompt. That's UI/opener
-  glue that sits outside the SCIFIO Format itself (probably a check against
-  `NDTiffStorage.getDataSetSize()` wired into whatever calls
-  `ImgOpener`/`DatasetIOService.open`), and hasn't been designed yet.
+- **>2GB virtual-stack-mode prompt**: implemented in `Parser.typedParse`
+  (uncommitted as of this writing - see "Next step" below). Uses
+  `NDTiffStorage.getDataSetSize()` against a 2GB threshold
+  (`VIRTUAL_STACK_THRESHOLD_BYTES`, matching classic ImageJ1's own large-TIFF
+  prompt threshold) and, if exceeded and `UIService.isHeadless()` is false,
+  shows a yes/no `UIService.showDialog(...)`. Answering yes calls
+  `config.imgOpenerSetImgModes(SCIFIOConfig.ImgMode.CELL)`, which makes
+  `ImgOpener` build a lazily-loaded `CellImg` instead of reading every plane
+  into memory - `ImgOpener` reads `imgOpenerGetImgModes()` back off the same
+  `SCIFIOConfig` instance it hands down into `typedParse`, so this works
+  regardless of entry point (drag-and-drop, File > Open, direct `ImgOpener`
+  call). When virtual-stack mode is chosen, `imgOpenerSetComputeMinMax` is
+  also left `false` (skipping the global min/max scan), since scanning every
+  plane up front would defeat the point of not loading the dataset eagerly.
+  Adding the new `@Parameter UIService uiService` field to `Parser` meant
+  every restricted `Context(Class...)` that constructs one now needs
+  `UIService.class` in its list too - same pattern already documented above
+  for `FormatService`. Both `NDTiffFormatTest`'s and `ManualOpen`'s Context
+  lists were missing it (caught before this was committed - would have
+  failed every test with "Required service is missing: UIService" the
+  moment `format.createParser()` ran), now fixed. Not yet covered by a
+  regression test: unit-testing the actual >2GB dialog branch would need a
+  real 2GB+ on-disk dataset (impractical to generate in a test), and the
+  project has no mocking library to fake `NDTiffStorage.getDataSetSize()`
+  instead. In the test `Context`, `UIService` resolves to
+  `org.scijava.ui.DefaultUIService`, which reports `isHeadless() == true`
+  with no Swing UI plugin registered, so the dialog branch is a no-op there
+  regardless - existing tests only got as far as confirming the code
+  compiles/injects correctly, not that the dialog itself fires correctly.
 - **macOS AppleDouble files break NDTiffStorage on network drives**: found
   via real-dataset debugging (see "Debugging with ManualOpen" below).
   `NDTiffStorage`'s own `ResolutionLevel.openExistingDataSet()` lists the
@@ -325,13 +350,31 @@ real bug; Eclipse/Maven's normal build handles it fine, which is also what
 
 ## Next step
 
-1. Open in Eclipse, F5 → Maven → Update Project (this pulls the two new
-   NDStorage/MMCoreJ dependencies), then run `NDTiffFormatTest` — this whole
-   implementation has only been checked by hand against library source, not
-   compiled. Fix whatever the compiler/tests turn up.
-2. Once it builds and the tests pass, do a real end-to-end check: point it at
-   an actual Micro-Manager-acquired NDTiff dataset (not just the synthetic
-   ones the unit tests generate) and confirm it opens as a correctly
-   dimensioned hyperstack via drag-and-drop.
-3. Design and implement the >2GB virtual-stack-mode prompt (see "Not yet
-   done" above) — the one piece of the original goal not yet started.
+The >2GB virtual-stack-mode prompt (see above) has been confirmed working
+end-to-end: installed as a real Fiji plugin and tested against an actual
+over-2GB Micro-Manager-acquired dataset, the dialog appears and virtual-stack
+mode works.
+
+One bug turned up in that real-Fiji test: the per-plane progress bar (added
+for the sequential-load case, see below) stayed permanently visible in
+virtual-stack mode and jumped back and forth to whatever plane was most
+recently displayed, instead of disappearing once the dataset "finished
+loading" - because in virtual-stack mode there is no such thing; `openPlane`
+gets called on demand, indefinitely, one plane at a time, as the user scrolls
+the hyperstack, not as part of one sequential up-front read. Fixed by adding
+a `Metadata.virtualStack` flag, set by `Parser.typedParse` when the user
+accepts the virtual-stack prompt, and checked by `Reader.openPlane` to skip
+the `statusService.showStatus(...)` call entirely when set. Not covered by a
+regression test, for the same reason the dialog branch itself isn't (see
+above) - exercising it needs a real over-2GB on-disk dataset, and there's no
+mocking library in this project to fake `NDTiffStorage.getDataSetSize()`
+instead.
+
+Remaining before commit:
+
+1. Confirm the progress-bar fix above in a real Fiji install against the same
+   large dataset (fixed by reading source/reasoning, not yet observed).
+2. Commit the `NDTiffFormat.java`/`NDTiffFormatTest.java`/`ManualOpen.java`
+   changes once confirmed. At that point every item in the original goal
+   (drag-and-drop, correct hyperstack dimensions, >2GB virtual-stack prompt)
+   is done.

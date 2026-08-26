@@ -44,6 +44,8 @@ import org.scijava.io.location.FileLocation;
 import org.scijava.io.location.Location;
 import org.scijava.plugin.Parameter;
 import org.scijava.plugin.Plugin;
+import org.scijava.ui.DialogPrompt;
+import org.scijava.ui.UIService;
 
 /**
  * SCIFIO format for reading Micro-Manager NDTiff datasets.
@@ -128,6 +130,7 @@ public class NDTiffFormat extends AbstractFormat {
 		private List<String> presentAxes;
 		private Map<String, List<Object>> axisValues;
 		private int width, height, bitDepth, byteDepth, pixelType;
+		private boolean virtualStack;
 
 		void setStorage(final NDTiffStorage storage) {
 			this.storage = storage;
@@ -135,6 +138,23 @@ public class NDTiffFormat extends AbstractFormat {
 
 		NDTiffStorage getStorage() {
 			return storage;
+		}
+
+		/**
+		 * Records whether the Parser put this dataset into virtual-stack
+		 * (on-demand, {@link SCIFIOConfig.ImgMode#CELL}) mode, so the Reader
+		 * knows not to report {@code openPlane} calls as sequential load
+		 * progress - those calls arrive one at a time, out of order, and
+		 * indefinitely (driven by whatever plane the user is currently
+		 * scrolled to), not as part of a single up-front read of the whole
+		 * dataset.
+		 */
+		void setVirtualStack(final boolean virtualStack) {
+			this.virtualStack = virtualStack;
+		}
+
+		boolean isVirtualStack() {
+			return virtualStack;
 		}
 
 		void setPresentAxes(final List<String> presentAxes) {
@@ -263,6 +283,16 @@ public class NDTiffFormat extends AbstractFormat {
 
 	public static class Parser extends AbstractParser<Metadata> {
 
+		/**
+		 * Matches classic ImageJ1's own threshold for prompting about opening a
+		 * large TIFF as a virtual stack instead of loading it into memory.
+		 */
+		private static final long VIRTUAL_STACK_THRESHOLD_BYTES = 2L * 1024 *
+			1024 * 1024;
+
+		@Parameter
+		private UIService uiService;
+
 		@Override
 		protected void typedParse(final DataHandle<Location> handle,
 			final Metadata meta, final SCIFIOConfig config) throws IOException,
@@ -346,10 +376,45 @@ public class NDTiffFormat extends AbstractFormat {
 			meta.setPixelInfo(essential.width, essential.height,
 				essential.bitDepth, byteDepth, pixelType);
 
+			// ImgOpener carries this same SCIFIOConfig instance all the way
+			// through from wherever it started (drag-and-drop, File > Open,
+			// ImgOpener called directly, ...) down into this typedParse call,
+			// then reads imgOpenerGetImgModes() back off of it afterward to
+			// decide how to allocate the image - so setting ImgMode.CELL here
+			// makes ImgOpener build a lazily-loaded, on-demand CellImg (SCIFIO's
+			// equivalent of classic ImageJ1's "virtual stack") instead of
+			// reading every plane into memory up front, regardless of which
+			// entry point got us here.
+			boolean computeMinMax = true;
+			final long dataSetSize = storage.getDataSetSize();
+			if (dataSetSize > VIRTUAL_STACK_THRESHOLD_BYTES && !uiService
+				.isHeadless())
+			{
+				final double gb = dataSetSize / (1024.0 * 1024 * 1024);
+				final DialogPrompt.Result result = uiService.showDialog(String
+					.format(
+						"This NDTiff dataset is %.1f GB. Open as a virtual stack "
+							+ "(load planes from disk on demand) instead of loading "
+							+ "it all into memory?", gb), "Large NDTiff Dataset",
+					DialogPrompt.MessageType.QUESTION_MESSAGE,
+					DialogPrompt.OptionType.YES_NO_OPTION);
+				if (result == DialogPrompt.Result.YES_OPTION) {
+					config.imgOpenerSetImgModes(SCIFIOConfig.ImgMode.CELL);
+					// A virtual stack is chosen specifically to avoid reading the
+					// whole dataset up front - scanning every plane for its global
+					// min/max would defeat that, so skip it same as classic
+					// ImageJ1 does for its own virtual stacks.
+					computeMinMax = false;
+					meta.setVirtualStack(true);
+				}
+			}
+
 			// Many NDTiff datasets are acquired with a small dynamic range
 			// (e.g. 12-bit) inside a 16-bit container; auto-scaling the display
 			// range makes them visible without a manual contrast adjustment.
-			config.imgOpenerSetComputeMinMax(true);
+			if (computeMinMax) {
+				config.imgOpenerSetComputeMinMax(true);
+			}
 		}
 
 		private static void deleteAppleDoubleFiles(final File dir) {
@@ -434,12 +499,20 @@ public class NDTiffFormat extends AbstractFormat {
 			// progress bar at the bottom of the main Fiji window (via
 			// imagej-legacy's bridge from StatusService to ij.IJ.showStatus/
 			// showProgress); without it, opening a many-plane dataset is silent.
-			long totalPlanes = 1;
-			for (final long length : lengths) {
-				totalPlanes *= length;
+			// But that only makes sense for a single sequential up-front read of
+			// the whole dataset - in virtual-stack mode, openPlane is instead
+			// called on demand, one plane at a time, indefinitely, as the user
+			// scrolls through the hyperstack, which would otherwise leave the
+			// progress bar permanently visible and jumping back and forth to
+			// whatever plane was last displayed.
+			if (!meta.isVirtualStack()) {
+				long totalPlanes = 1;
+				for (final long length : lengths) {
+					totalPlanes *= length;
+				}
+				statusService.showStatus((int) planeIndex + 1, (int) totalPlanes,
+					"Reading plane " + (planeIndex + 1) + "/" + totalPlanes);
 			}
-			statusService.showStatus((int) planeIndex + 1, (int) totalPlanes,
-				"Reading plane " + (planeIndex + 1) + "/" + totalPlanes);
 
 			final HashMap<String, Object> axes = new HashMap<>();
 			for (int i = 0; i < presentAxes.size(); i++) {
