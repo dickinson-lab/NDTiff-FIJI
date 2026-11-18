@@ -1,6 +1,7 @@
 
 package io.scif.formats;
 
+import io.scif.config.SCIFIOConfig;
 import io.scif.img.ImgUtilityService;
 import io.scif.img.converters.PlaneConverterService;
 import io.scif.services.DatasetIOService;
@@ -8,6 +9,7 @@ import io.scif.services.FilePatternService;
 import io.scif.services.InitializeService;
 
 import java.io.File;
+import java.util.List;
 
 import net.imagej.Dataset;
 
@@ -15,6 +17,7 @@ import org.scijava.Context;
 import org.scijava.app.StatusService;
 import org.scijava.io.handle.DataHandleService;
 import org.scijava.io.location.FileLocation;
+import org.scijava.task.TaskService;
 import org.scijava.ui.UIService;
 
 /**
@@ -49,10 +52,12 @@ public class ManualOpen {
 		// later (Checker/Parser/Reader/ImgOpener), which Context's automatic
 		// dependency resolution doesn't see coming since those objects aren't
 		// Services themselves - so they have to be requested up front too.
+		// (TaskService: needed by newer SCIFIO's ImgOpener, e.g. Fiji's 0.49.2.)
 		final Context context = new Context(DatasetIOService.class,
 			DataHandleService.class, ImgUtilityService.class,
 			StatusService.class, PlaneConverterService.class,
-			InitializeService.class, FilePatternService.class, UIService.class);
+			InitializeService.class, FilePatternService.class, UIService.class,
+			TaskService.class);
 		try {
 			final DatasetIOService ioService = context.getService(
 				DatasetIOService.class);
@@ -61,11 +66,15 @@ public class ManualOpen {
 
 			System.out.println("canOpen: " + ioService.canOpen(location));
 
-			final Dataset dataset = ioService.open(location);
-			System.out.println("Opened: " + dataset.getName());
-			for (int d = 0; d < dataset.numDimensions(); d++) {
-				System.out.println("  " + dataset.axis(d).type() + ": " + dataset
-					.dimension(d));
+			// One Dataset per stage position (see NDTiffFormat).
+			final List<Dataset> datasets = ioService.openAll(location,
+				new SCIFIOConfig(context).imgOpenerSetOpenAllImages(true));
+			for (final Dataset dataset : datasets) {
+				System.out.println("Opened: " + dataset.getName());
+				for (int d = 0; d < dataset.numDimensions(); d++) {
+					System.out.println("  " + dataset.axis(d).type() + ": " + dataset
+						.dimension(d));
+				}
 			}
 		}
 		finally {

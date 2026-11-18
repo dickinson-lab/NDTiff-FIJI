@@ -14,7 +14,12 @@ import io.scif.ByteArrayPlane;
 import io.scif.FormatException;
 import io.scif.ImageMetadata;
 import io.scif.config.SCIFIOConfig;
+import io.scif.img.ImgUtilityService;
+import io.scif.img.converters.PlaneConverterService;
+import io.scif.services.DatasetIOService;
+import io.scif.services.FilePatternService;
 import io.scif.services.FormatService;
+import io.scif.services.InitializeService;
 import io.scif.util.FormatTools;
 
 import java.io.ByteArrayOutputStream;
@@ -28,9 +33,12 @@ import java.util.List;
 
 import mmcorej.org.json.JSONObject;
 
+import net.imagej.Dataset;
 import net.imagej.axis.Axes;
 import net.imagej.axis.CalibratedAxis;
 import net.imglib2.Interval;
+import net.imglib2.RandomAccess;
+import net.imglib2.type.numeric.RealType;
 import net.imglib2.util.Intervals;
 
 import org.junit.AfterClass;
@@ -43,6 +51,7 @@ import org.scijava.Context;
 import org.scijava.app.StatusService;
 import org.scijava.io.handle.DataHandleService;
 import org.scijava.io.location.FileLocation;
+import org.scijava.task.TaskService;
 import org.scijava.ui.UIService;
 
 /**
@@ -127,6 +136,39 @@ public class NDTiffFormatTest {
 		final HashMap<String, Object> axes = axes(k1, v1);
 		axes.put(k2, v2);
 		return axes;
+	}
+
+	/** Axes map with all four supported axes. */
+	private static HashMap<String, Object> axes(final int z, final int channel,
+		final int time, final int position)
+	{
+		final HashMap<String, Object> axes = axes("z", z, "channel", channel);
+		axes.put("time", time);
+		axes.put("position", position);
+		return axes;
+	}
+
+	/**
+	 * Writes a dataset with 2 Z slices x 3 stage positions (plus single-valued
+	 * channel and time axes, as Micro-Manager typically writes them). Pixel
+	 * values are 100, 200, ... in write order, so position p, slice z holds
+	 * {@code 100 * (2 * p + z + 1)}.
+	 */
+	private static void writeMultiPositionDataset(final File dir)
+		throws Exception
+	{
+		writeDataset(dir, Arrays.asList(axes(0, 0, 0, 0), axes(1, 0, 0, 0), axes(
+			0, 0, 0, 1), axes(1, 0, 0, 1), axes(0, 0, 0, 2), axes(1, 0, 0, 2)), 4,
+			3);
+	}
+
+	private static boolean hasAxis(final List<CalibratedAxis> axes,
+		final String label)
+	{
+		for (final CalibratedAxis axis : axes) {
+			if (axis.type().getLabel().equals(label)) return true;
+		}
+		return false;
 	}
 
 	@Test
@@ -364,5 +406,125 @@ public class NDTiffFormatTest {
 
 		assertFalse(captured.toString().contains(
 			"Couldn't read displaysettings"));
+	}
+
+	/**
+	 * Each stage position must be its own image (so it opens in its own
+	 * window), with no Position axis, and a title naming the position.
+	 */
+	@Test
+	public void testEachPositionIsSeparateImage() throws Exception {
+		final File dir = tmp.newFolder("dataset");
+		writeMultiPositionDataset(dir);
+
+		final Parser parser = (Parser) format.createParser();
+		final Metadata metadata = parser.parse(new FileLocation(dir));
+
+		assertEquals(3, metadata.getImageCount());
+		for (int p = 0; p < 3; p++) {
+			final ImageMetadata imgMeta = metadata.get(p);
+			assertEquals("dataset - Position " + p, imgMeta.getName());
+			assertFalse(hasAxis(imgMeta.getAxes(), "Position"));
+			assertEquals(4, imgMeta.getAxisLength(Axes.X));
+			assertEquals(3, imgMeta.getAxisLength(Axes.Y));
+			assertEquals(2, imgMeta.getAxisLength(Axes.Z));
+			assertEquals(2, imgMeta.getPlaneCount());
+		}
+	}
+
+	@Test
+	public void testOpenPlaneReadsEachPosition() throws Exception {
+		final File dir = tmp.newFolder("dataset");
+		writeMultiPositionDataset(dir);
+
+		final Reader reader = (Reader) format.createReader();
+		reader.setSource(new FileLocation(dir));
+
+		final Interval bounds = Intervals.createMinSize(0, 0, 4, 3);
+		for (int p = 0; p < 3; p++) {
+			for (int z = 0; z < 2; z++) {
+				final ByteArrayPlane plane = reader.createPlane(bounds);
+				reader.openPlane(p, z, plane, bounds, new SCIFIOConfig());
+				final short[] actual = new short[4 * 3];
+				ByteBuffer.wrap(plane.getBytes()).order(ByteOrder.LITTLE_ENDIAN)
+					.asShortBuffer().get(actual);
+				final short[] expected = new short[4 * 3];
+				Arrays.fill(expected, (short) (100 * (2 * p + z + 1)));
+				assertArrayEquals("position " + p + ", z " + z, expected, actual);
+			}
+		}
+	}
+
+	/**
+	 * A position axis with only one value must still be included in each
+	 * plane lookup (NDTiffStorage indexes planes by their full axes map), and
+	 * the single image keeps its default (file/folder name) title.
+	 */
+	@Test
+	public void testSinglePositionDatasetIsOneUnnamedImage() throws Exception {
+		final File dir = tmp.newFolder("dataset");
+		writeDataset(dir, Arrays.asList(axes("channel", 0, "position", 0), axes(
+			"channel", 1, "position", 0)), 4, 3);
+
+		final Reader reader = (Reader) format.createReader();
+		reader.setSource(new FileLocation(dir));
+		final Metadata metadata = reader.getMetadata();
+		assertEquals(1, metadata.getImageCount());
+		assertEquals(null, metadata.get(0).getName());
+		assertFalse(hasAxis(metadata.get(0).getAxes(), "Position"));
+
+		final Interval bounds = Intervals.createMinSize(0, 0, 4, 3);
+		final ByteArrayPlane plane = reader.createPlane(bounds);
+		reader.openPlane(0, 1, plane, bounds, new SCIFIOConfig());
+		final short[] actual = new short[4 * 3];
+		ByteBuffer.wrap(plane.getBytes()).order(ByteOrder.LITTLE_ENDIAN)
+			.asShortBuffer().get(actual);
+		final short[] expected = new short[4 * 3];
+		Arrays.fill(expected, (short) 200);
+		assertArrayEquals(expected, actual);
+	}
+
+	/**
+	 * End-to-end through ImgOpener: NDTiffIOPlugin returns the first
+	 * position, and opening all images yields one Dataset per position with
+	 * the right pixels. Uses its own Context because DatasetIOService/
+	 * ImgOpener need more services than the rest of this class (same list
+	 * ManualOpen uses; TaskService is needed by newer SCIFIO's ImgOpener, e.g.
+	 * the 0.49.2 Fiji now bundles). UIService is forced headless so the plugin
+	 * doesn't try to show windows during the test.
+	 */
+	@Test
+	public void testIOPluginOpensEveryPosition() throws Exception {
+		final File dir = tmp.newFolder("dataset");
+		writeMultiPositionDataset(dir);
+
+		final Context ctx = new Context(DatasetIOService.class,
+			DataHandleService.class, ImgUtilityService.class, StatusService.class,
+			PlaneConverterService.class, InitializeService.class,
+			FilePatternService.class, UIService.class, TaskService.class);
+		try {
+			ctx.getService(UIService.class).setHeadless(true);
+			final FileLocation loc = new FileLocation(dir);
+
+			final NDTiffIOPlugin plugin = new NDTiffIOPlugin();
+			ctx.inject(plugin);
+			assertEquals("dataset - Position 0", plugin.open(loc).getName());
+
+			final List<Dataset> all = ctx.getService(DatasetIOService.class)
+				.openAll(loc, new SCIFIOConfig(ctx).imgOpenerSetOpenAllImages(true));
+			assertEquals(3, all.size());
+			for (int p = 0; p < 3; p++) {
+				final Dataset ds = all.get(p);
+				assertEquals("dataset - Position " + p, ds.getName());
+				assertEquals(-1, ds.dimensionIndex(Axes.get("Position")));
+				assertEquals(2, ds.dimension(ds.dimensionIndex(Axes.Z)));
+				final RandomAccess<RealType<?>> ra = ds.randomAccess();
+				ra.setPosition(new long[ds.numDimensions()]);
+				assertEquals(100 * (2 * p + 1), ra.get().getRealDouble(), 0);
+			}
+		}
+		finally {
+			ctx.dispose();
+		}
 	}
 }

@@ -11,8 +11,9 @@ Micro-Manager's own viewer would open it.
 - Drag-and-drop an NDTiff dataset folder - or a single one of its
   `*_NDTiffStack.tif` files - onto the main Fiji window. `File > Open...`
   works the same way.
-- Opens as a properly dimensioned hyperstack (Z / Channel / Time / Position
-  axes, as recorded in the dataset).
+- Opens as a properly dimensioned hyperstack (Z / Channel / Time axes, as
+  recorded in the dataset). Multi-position datasets open with each stage
+  position in its own window, titled `<dataset> - Position <n>`.
 - For datasets larger than 2GB, prompts to open as a virtual stack (loading
   planes from disk on demand instead of reading the whole dataset into
   memory), matching classic ImageJ's own large-TIFF behavior.

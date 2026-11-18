@@ -1,10 +1,13 @@
 
 package io.scif.formats;
 
+import io.scif.config.SCIFIOConfig;
+import io.scif.config.SCIFIOConfig.ImgMode;
 import io.scif.services.DatasetIOService;
 
 import java.io.File;
 import java.io.IOException;
+import java.util.List;
 
 import net.imagej.Dataset;
 
@@ -16,6 +19,7 @@ import org.scijava.io.location.Location;
 import org.scijava.plugin.Attr;
 import org.scijava.plugin.Parameter;
 import org.scijava.plugin.Plugin;
+import org.scijava.ui.UIService;
 
 /**
  * Makes dragging-and-dropping an NDTiff dataset folder - or a single one of
@@ -40,6 +44,9 @@ public class NDTiffIOPlugin extends AbstractIOPlugin<Dataset> {
 	@Parameter
 	private DatasetIOService datasetIOService;
 
+	@Parameter
+	private UIService uiService;
+
 	@Override
 	public Class<Dataset> getDataType() {
 		return Dataset.class;
@@ -56,13 +63,50 @@ public class NDTiffIOPlugin extends AbstractIOPlugin<Dataset> {
 		return NDTiffFormat.isNDTiffLocation(new File(source));
 	}
 
+	/**
+	 * Opens every stage position of the dataset (each is its own image - see
+	 * {@link NDTiffFormat}), shows all but the first in their own windows, and
+	 * returns the first.
+	 * <p>
+	 * An {@code IOPlugin} can only return one object, and Fiji's legacy opener
+	 * only displays a returned {@link Dataset} (it does nothing with a list),
+	 * so the first position goes back through the normal path - legacy
+	 * displays it exactly as before - and the rest are shown here via
+	 * {@link UIService}, the standard way a {@link Dataset} becomes an ImageJ
+	 * window in Fiji. They're shown first so the first position's window ends
+	 * up in front. In a headless context nothing is shown and only the first
+	 * position is returned; call
+	 * {@code DatasetIOService.openAll(source, config)} with
+	 * {@code imgOpenerSetOpenAllImages(true)} to get every position there.
+	 * </p>
+	 */
 	@Override
 	public Dataset open(final Location source) throws IOException {
-		return datasetIOService.open(source);
+		final List<Dataset> positions = datasetIOService.openAll(source,
+			openAllConfig());
+		if (!uiService.isHeadless()) {
+			for (int i = 1; i < positions.size(); i++) {
+				uiService.show(positions.get(i));
+			}
+		}
+		return positions.get(0);
 	}
 
 	@Override
 	public Dataset open(final String source) throws IOException {
-		return datasetIOService.open(new FileLocation(new File(source)));
+		return open(new FileLocation(new File(source)));
+	}
+
+	/**
+	 * Same defaults {@code DatasetIOService.open(Location)} uses (planar
+	 * images, which ImageJ1 needs; no up-front min/max scan - though
+	 * {@link NDTiffFormat}'s Parser may change both), but reading every image
+	 * rather than only image 0.
+	 */
+	private SCIFIOConfig openAllConfig() {
+		return new SCIFIOConfig(getContext()) //
+			.imgOpenerSetComputeMinMax(false) //
+			.imgOpenerSetImgModes(ImgMode.PLANAR) //
+			.imgOpenerSetOpenAllImages(true);
 	}
 }

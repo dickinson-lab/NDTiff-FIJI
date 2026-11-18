@@ -68,6 +68,12 @@ import org.scijava.ui.UIService;
  * rather than silently dropping data.
  * </p>
  * <p>
+ * Each stage position is exposed as a separate SCIFIO image (image index ==
+ * position index), each a hyperstack of at most X/Y/Z/Channel/Time, rather
+ * than position being a 6th dimension - {@link NDTiffIOPlugin} then opens
+ * every position in its own window.
+ * </p>
+ * <p>
  * There is no Writer: NDTiff is read-only for this plugin's purposes.
  * </p>
  */
@@ -75,12 +81,20 @@ import org.scijava.ui.UIService;
 public class NDTiffFormat extends AbstractFormat {
 
 	/**
-	 * Fixed order in which the non-planar (Z/Channel/Time/Position) axes are
-	 * enumerated. Index 0 varies fastest across plane indices. Matches the
+	 * Every axis key this format recognizes, in the order the per-image
+	 * non-planar axes (Z/Channel/Time) are enumerated - index 0 varies fastest
+	 * across plane indices. Matches the
 	 * axis key strings Micro-Manager's AcqEngJ writes into NDTiff metadata.
 	 */
 	static final List<String> AXIS_ORDER = Collections.unmodifiableList(Arrays
 		.asList("z", "channel", "time", "position"));
+
+	/**
+	 * Stage position axis key. Unlike the other {@link #AXIS_ORDER} axes, this
+	 * one is not an image dimension: each position is opened as its own
+	 * image/window (see {@link Metadata#setPositions}).
+	 */
+	static final String POSITION_AXIS = "position";
 
 	/**
 	 * Orders axis values for use as an ImageJ dimension index. Axis values in
@@ -163,6 +177,8 @@ public class NDTiffFormat extends AbstractFormat {
 		private NDTiffStorage storage;
 		private List<String> presentAxes;
 		private Map<String, List<Object>> axisValues;
+		private List<Object> positions = Collections.emptyList();
+		private String positionTitleBase;
 		private int width, height, bitDepth, byteDepth, pixelType;
 		private boolean virtualStack;
 
@@ -191,12 +207,45 @@ public class NDTiffFormat extends AbstractFormat {
 			return virtualStack;
 		}
 
+		/**
+		 * @param presentAxes The non-planar axes of each image, in
+		 *          {@link NDTiffFormat#AXIS_ORDER} - every axis the dataset uses
+		 *          <em>except</em> {@code "position"}, since each stage
+		 *          position is its own image (see {@link #setPositions}).
+		 */
 		void setPresentAxes(final List<String> presentAxes) {
 			this.presentAxes = presentAxes;
 		}
 
 		List<String> getPresentAxes() {
 			return presentAxes;
+		}
+
+		/**
+		 * @param positions Every distinct {@code "position"} axis value in the
+		 *          dataset, in order; empty if the dataset has no position axis.
+		 *          Each one becomes its own SCIFIO image (image index ==
+		 *          index into this list), so each stage position opens as its
+		 *          own window instead of as an extra hyperstack dimension.
+		 */
+		void setPositions(final List<Object> positions) {
+			this.positions = positions;
+		}
+
+		/**
+		 * @return The {@code "position"} axis value for {@code imageIndex}, or
+		 *         {@code null} if the dataset has no position axis.
+		 */
+		Object getPosition(final int imageIndex) {
+			return positions.isEmpty() ? null : positions.get(imageIndex);
+		}
+
+		/**
+		 * @param positionTitleBase Start of each per-position window title
+		 *          (the dataset folder name, even if a stack .tif was opened).
+		 */
+		void setPositionTitleBase(final String positionTitleBase) {
+			this.positionTitleBase = positionTitleBase;
 		}
 
 		void setAxisValues(final Map<String, List<Object>> axisValues) {
@@ -229,30 +278,47 @@ public class NDTiffFormat extends AbstractFormat {
 			return byteDepth;
 		}
 
+		/**
+		 * Creates one image per stage position (or a single image if the
+		 * dataset has no position axis), each with axes X, Y plus whichever of
+		 * Z/Channel/Time the dataset uses - so every image is at most 5-D, the
+		 * most an ImageJ hyperstack can show.
+		 */
 		@Override
 		public void populateImageMetadata() {
-			createImageMetadata(1);
-			final ImageMetadata imageMeta = get(0);
+			final int imageCount = Math.max(1, positions.size());
+			createImageMetadata(imageCount);
+			for (int imageIndex = 0; imageIndex < imageCount; imageIndex++) {
+				final ImageMetadata imageMeta = get(imageIndex);
 
-			imageMeta.setOrderCertain(true);
-			imageMeta.setPlanarAxisCount(2);
-			imageMeta.setLittleEndian(true);
-			imageMeta.setPixelType(pixelType);
-			imageMeta.setBitsPerPixel(bitDepth);
+				imageMeta.setOrderCertain(true);
+				imageMeta.setPlanarAxisCount(2);
+				imageMeta.setLittleEndian(true);
+				imageMeta.setPixelType(pixelType);
+				imageMeta.setBitsPerPixel(bitDepth);
 
-			final List<CalibratedAxis> axes = new ArrayList<>();
-			axes.add(new DefaultLinearAxis(Axes.X));
-			axes.add(new DefaultLinearAxis(Axes.Y));
-			final long[] lengths = new long[2 + presentAxes.size()];
-			lengths[0] = width;
-			lengths[1] = height;
-			for (int i = 0; i < presentAxes.size(); i++) {
-				final String axis = presentAxes.get(i);
-				axes.add(new DefaultLinearAxis(axisType(axis)));
-				lengths[2 + i] = axisValues.get(axis).size();
+				final List<CalibratedAxis> axes = new ArrayList<>();
+				axes.add(new DefaultLinearAxis(Axes.X));
+				axes.add(new DefaultLinearAxis(Axes.Y));
+				final long[] lengths = new long[2 + presentAxes.size()];
+				lengths[0] = width;
+				lengths[1] = height;
+				for (int i = 0; i < presentAxes.size(); i++) {
+					final String axis = presentAxes.get(i);
+					axes.add(new DefaultLinearAxis(axisType(axis)));
+					lengths[2 + i] = axisValues.get(axis).size();
+				}
+				imageMeta.setAxes(axes.toArray(new CalibratedAxis[0]));
+				imageMeta.setAxisLengths(lengths);
+
+				// ImgOpener uses this as the window title. With only one image,
+				// leave it unset so the title stays the file/folder name, as
+				// before.
+				if (imageCount > 1) {
+					imageMeta.setName(positionTitleBase + " - Position " + positions.get(
+						imageIndex));
+				}
 			}
-			imageMeta.setAxes(axes.toArray(new CalibratedAxis[0]));
-			imageMeta.setAxisLengths(lengths);
 		}
 
 		private static AxisType axisType(final String axis) {
@@ -263,10 +329,6 @@ public class NDTiffFormat extends AbstractFormat {
 					return Axes.CHANNEL;
 				case "time":
 					return Axes.TIME;
-				case "position":
-					// No built-in ImageJ2 axis for stage position; this creates
-					// (and caches) a custom, non-spatial one.
-					return Axes.get("Position");
 				default:
 					throw new IllegalStateException("Unhandled axis: " + axis);
 			}
@@ -399,17 +461,22 @@ public class NDTiffFormat extends AbstractFormat {
 				}
 			}
 
+			// Stage position isn't an image dimension: each position becomes its
+			// own image (and so its own window). Everything else stays a
+			// hyperstack dimension of every image.
 			final List<String> presentAxes = new ArrayList<>();
 			final Map<String, List<Object>> axisValues = new LinkedHashMap<>();
 			for (final String axis : AXIS_ORDER) {
 				final TreeSet<Object> values = valueSets.get(axis);
-				if (!values.isEmpty()) {
+				if (!values.isEmpty() && !POSITION_AXIS.equals(axis)) {
 					presentAxes.add(axis);
 					axisValues.put(axis, new ArrayList<>(values));
 				}
 			}
 			meta.setPresentAxes(presentAxes);
 			meta.setAxisValues(axisValues);
+			meta.setPositions(new ArrayList<>(valueSets.get(POSITION_AXIS)));
+			meta.setPositionTitleBase(dir.getName());
 
 			final HashMap<String, Object> representative = axesSet.iterator()
 				.next();
@@ -590,13 +657,21 @@ public class NDTiffFormat extends AbstractFormat {
 			// scrolls through the hyperstack, which would otherwise leave the
 			// progress bar permanently visible and jumping back and forth to
 			// whatever plane was last displayed.
+			// With several stage positions, ImgOpener reads them one image after
+			// another, so report progress across all of them - one bar from 0 to
+			// 100% for the whole open, rather than restarting per position.
 			if (!meta.isVirtualStack()) {
-				long totalPlanes = 1;
+				long planesPerImage = 1;
 				for (final long length : lengths) {
-					totalPlanes *= length;
+					planesPerImage *= length;
 				}
-				statusService.showStatus((int) planeIndex + 1, (int) totalPlanes,
-					"Reading plane " + (planeIndex + 1) + "/" + totalPlanes);
+				final int imageCount = meta.getImageCount();
+				final long done = imageIndex * planesPerImage + planeIndex + 1;
+				final long total = imageCount * planesPerImage;
+				final String what = imageCount > 1 ? "Reading position " +
+					(imageIndex + 1) + "/" + imageCount + ", plane " : "Reading plane ";
+				statusService.showStatus((int) done, (int) total, what +
+					(planeIndex + 1) + "/" + planesPerImage);
 			}
 
 			final HashMap<String, Object> axes = new HashMap<>();
@@ -604,6 +679,10 @@ public class NDTiffFormat extends AbstractFormat {
 				final String axis = presentAxes.get(i);
 				axes.put(axis, meta.getAxisValues(axis).get((int) pos[i]));
 			}
+			// Each image is one stage position; NDTiffStorage indexes planes by
+			// their full axes map, position included.
+			final Object position = meta.getPosition(imageIndex);
+			if (position != null) axes.put(POSITION_AXIS, position);
 
 			final int width = meta.getWidth();
 			final int height = meta.getHeight();

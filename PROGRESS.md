@@ -55,8 +55,37 @@ Design decisions made this session:
   other axis key found in the dataset's `getAxesSet()` makes the Parser throw
   a `FormatException` naming the bad key, rather than silently dropping data.
   Non-planar axis order (fastest-varying first, for
-  `FormatTools.rasterToPosition`) is `[z, channel, time, position]`, filtered
-  down to whichever of those are actually present in the dataset.
+  `FormatTools.rasterToPosition`) is `[z, channel, time]`, filtered down to
+  whichever of those are actually present in the dataset - `position` is
+  not an image dimension (next bullet).
+- **One window per stage position**: each distinct `"position"` value is
+  its own SCIFIO image (`Metadata.setPositions`; image index == index into
+  that list), each a hyperstack of at most X/Y/Z/C/T, titled
+  `<dataset folder> - Position <n>` when there's more than one (single
+  image keeps its default file/folder-name title). `Reader.openPlane` adds
+  the image's position back into the NDTiffStorage lookup key (needed even
+  when there's only one position value - NDTiffStorage indexes planes by
+  their full axes map). `NDTiffIOPlugin.open` calls
+  `DatasetIOService.openAll` with `imgOpenerSetOpenAllImages(true)` (one
+  reader/parse, so the >2GB prompt appears once), shows positions 1..N-1
+  via `UIService.show` (the standard Dataset-to-window path in Fiji), and
+  returns position 0 for imagej-legacy's `DefaultLegacyOpener` to display
+  as before - an `IOPlugin` can return only one object, and legacy only
+  displays a returned `Dataset` (it ignores a `List`). Headless, only
+  position 0 is returned. This replaced position-as-6th-dimension, which
+  also hit a SCIFIO bug in virtual-stack mode: `SCIFIOCellImgFactory`
+  hardcodes 5 cell dimensions, so 6-D images crash with
+  `ArrayIndexOutOfBoundsException: Index 5 out of bounds for length 5` (still
+  present in SCIFIO 0.49.2 and on SCIFIO's `main` - worth a PR to
+  `scifio/scifio`). A reflection-based workaround for that is saved on
+  branch `cellimg-6d-workaround` (commit `9c9db24`), not merged. Tests:
+  `testEachPositionIsSeparateImage`, `testOpenPlaneReadsEachPosition`,
+  `testSinglePositionDatasetIsOneUnnamedImage`,
+  `testIOPluginOpensEveryPosition` (end-to-end through ImgOpener; needs
+  `TaskService` in its Context with Fiji's newer SCIFIO, also added to
+  `ManualOpen`). Verified by compiling against `/Applications/Fiji/jars/`
+  (SCIFIO 0.49.2) with `javac -proc:full` and running JUnit directly: 16/16
+  pass. Not yet checked in the Fiji GUI.
 - **Directory-as-format**: an NDTiff dataset is a folder, not a single file,
   which doesn't fit SCIFIO's usual single-byte-stream model. Solved by:
   `Checker` sets `suffixNecessary()`/`suffixSufficient()` both `false` and
