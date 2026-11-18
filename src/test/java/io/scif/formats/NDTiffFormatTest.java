@@ -34,10 +34,12 @@ import java.util.List;
 import mmcorej.org.json.JSONObject;
 
 import net.imagej.Dataset;
+import net.imagej.ImgPlus;
 import net.imagej.axis.Axes;
 import net.imagej.axis.CalibratedAxis;
 import net.imglib2.Interval;
 import net.imglib2.RandomAccess;
+import net.imglib2.display.ColorTable;
 import net.imglib2.type.numeric.RealType;
 import net.imglib2.util.Intervals;
 
@@ -102,8 +104,16 @@ public class NDTiffFormatTest {
 		final List<HashMap<String, Object>> planeAxes, final int width,
 		final int height) throws Exception
 	{
+		return writeDataset(dir, planeAxes, width, height, new JSONObject());
+	}
+
+	/** As above, with the given summary metadata (e.g. {@code ChNames}). */
+	private static NDTiffStorage writeDataset(final File dir,
+		final List<HashMap<String, Object>> planeAxes, final int width,
+		final int height, final JSONObject summaryMetadata) throws Exception
+	{
 		final NDTiffStorage storage = new NDTiffStorage(dir.getAbsolutePath(),
-			"test", new JSONObject(), 0, 0, false, null, 10, null, false);
+			"test", summaryMetadata, 0, 0, false, null, 10, null, false);
 		int value = 0;
 		for (final HashMap<String, Object> axes : planeAxes) {
 			final short[] pixels = new short[width * height];
@@ -409,6 +419,33 @@ public class NDTiffFormatTest {
 	}
 
 	/**
+	 * Current Micro-Manager saves display settings as DisplaySettings.json
+	 * (a Property Map); stock NDTiffStorage releases only look for the legacy
+	 * display_settings.txt. This plugin builds against the lab's
+	 * NDTiffStorage fork, which reads the .json file - this fails if the
+	 * dependency is ever switched back to a release without that fix.
+	 */
+	@Test
+	public void testReadsMicroManagerDisplaySettingsJson() throws Exception {
+		final File dir = tmp.newFolder("dataset");
+		writeDataset(dir, Arrays.asList(axes("channel", 0)), 4, 3);
+		final String json = "{\"encoding\": \"UTF-8\", \"format\": " +
+			"\"Micro-Manager Property Map\", \"major_version\": 2, " +
+			"\"minor_version\": 0, \"map\": {\"Autostretch\": " +
+			"{\"type\": \"BOOLEAN\", \"scalar\": true}}}";
+		java.nio.file.Files.write(new File(dir, "DisplaySettings.json").toPath(),
+			json.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+
+		final Parser parser = (Parser) format.createParser();
+		final Metadata metadata = parser.parse(new FileLocation(dir));
+		final JSONObject displaySettings = metadata.getStorage()
+			.getDisplaySettings();
+		assertTrue(displaySettings != null);
+		assertEquals("Micro-Manager Property Map", displaySettings.getString(
+			"format"));
+	}
+
+	/**
 	 * Each stage position must be its own image (so it opens in its own
 	 * window), with no Position axis, and a title naming the position.
 	 */
@@ -521,6 +558,116 @@ public class NDTiffFormatTest {
 				final RandomAccess<RealType<?>> ra = ds.randomAccess();
 				ra.setPosition(new long[ds.numDimensions()]);
 				assertEquals(100 * (2 * p + 1), ra.get().getRealDouble(), 0);
+			}
+		}
+		finally {
+			ctx.dispose();
+		}
+	}
+
+	/** One ChannelSettings entry, in Micro-Manager's Property Map format. */
+	private static String channelSettingsJson(final String name,
+		final double r, final double g, final double b, final long min,
+		final long max)
+	{
+		return "{\"Channel\": {\"type\": \"STRING\", \"scalar\": \"" + name +
+			"\"}, \"Color\": {\"type\": \"COLOR\", \"scalar\": {\"ColorSpace\": " +
+			"\"sRGB\", \"Components\": [" + r + ", " + g + ", " + b + "], " +
+			"\"Alpha\": 1.0}}, \"ComponentSettings\": {\"type\": " +
+			"\"PROPERTY_MAP\", \"array\": [{\"ScalingMin\": {\"type\": \"LONG\", " +
+			"\"scalar\": " + min + "}, \"ScalingMax\": {\"type\": \"LONG\", " +
+			"\"scalar\": " + max + "}}]}}";
+	}
+
+	private static JSONObject displaySettingsJson(final String... channels)
+		throws Exception
+	{
+		return new JSONObject("{\"format\": \"Micro-Manager Property Map\", " +
+			"\"map\": {\"ColorMode\": {\"type\": \"STRING\", \"scalar\": " +
+			"\"COLOR\"}, \"ChannelSettings\": {\"type\": \"PROPERTY_MAP\", " +
+			"\"array\": [" + String.join(", ", channels) + "]}}}");
+	}
+
+	/**
+	 * Channels are matched to settings entries by name via ChNames, not by
+	 * position (Micro-Manager can list more channels, in another order);
+	 * Long.MAX_VALUE means "unset"; with no name match, fall back to index.
+	 */
+	@Test
+	public void testDisplaySettingsMatchChannelsByName() throws Exception {
+		final JSONObject settings = displaySettingsJson( //
+			channelSettingsJson("Extra", 1, 1, 1, 1, 2), //
+			channelSettingsJson("iSIM 488", 0.2, 1, 0.2, 1122, 2556), //
+			channelSettingsJson("Brightfield", 1, 1, 1, 905, Long.MAX_VALUE));
+		final JSONObject summary = new JSONObject(
+			"{\"ChNames\": [\"Brightfield\", \"iSIM 488\"]}");
+
+		final List<NDTiffDisplaySettings.Channel> channels = NDTiffDisplaySettings
+			.forChannels(settings, summary, Arrays.asList((Object) 0, 1));
+		assertEquals(2, channels.size());
+		final NDTiffDisplaySettings.Channel bf = channels.get(0);
+		assertEquals(255, bf.red);
+		assertFalse(bf.hasRange());
+		final NDTiffDisplaySettings.Channel gfp = channels.get(1);
+		assertEquals(51, gfp.red);
+		assertEquals(255, gfp.green);
+		assertEquals(51, gfp.blue);
+		assertEquals(1122, gfp.min, 0);
+		assertEquals(2556, gfp.max, 0);
+
+		// No ChNames: fall back to the entry at the same index.
+		assertEquals(255, NDTiffDisplaySettings.forChannels(settings, null,
+			Arrays.asList((Object) 1)).get(0).green);
+		// No settings at all: nothing to apply.
+		assertTrue(NDTiffDisplaySettings.forChannels(null, summary, null)
+			.isEmpty());
+	}
+
+	/**
+	 * End-to-end: opening through NDTiffIOPlugin applies Micro-Manager's
+	 * channel colors and display ranges to the Dataset Fiji displays, and puts
+	 * it in composite mode.
+	 */
+	@Test
+	public void testIOPluginAppliesDisplaySettings() throws Exception {
+		final File dir = tmp.newFolder("dataset");
+		final JSONObject summary = new JSONObject(
+			"{\"ChNames\": [\"Brightfield\", \"iSIM 488\"]}");
+		writeDataset(dir, Arrays.asList(axes("z", 0, "channel", 0), axes("z", 1,
+			"channel", 0), axes("z", 0, "channel", 1), axes("z", 1, "channel", 1)),
+			4, 3, summary);
+		final JSONObject settings = displaySettingsJson( //
+			channelSettingsJson("iSIM 488", 0.2, 1, 0.2, 150, 350), //
+			channelSettingsJson("Brightfield", 1, 1, 1, 0, Long.MAX_VALUE));
+		java.nio.file.Files.write(new File(dir, "DisplaySettings.json").toPath(),
+			settings.toString().getBytes(java.nio.charset.StandardCharsets.UTF_8));
+
+		final Context ctx = new Context(DatasetIOService.class,
+			DataHandleService.class, ImgUtilityService.class, StatusService.class,
+			PlaneConverterService.class, InitializeService.class,
+			FilePatternService.class, UIService.class, TaskService.class);
+		try {
+			ctx.getService(UIService.class).setHeadless(true);
+			final NDTiffIOPlugin plugin = new NDTiffIOPlugin();
+			ctx.inject(plugin);
+			final Dataset ds = plugin.open(new FileLocation(dir));
+
+			assertEquals(2, ds.getCompositeChannelCount());
+			// Brightfield's max is unset in the settings, so its range is
+			// whatever Fiji computed - only iSIM 488's range is Micro-Manager's.
+			assertEquals(150, ds.getChannelMinimum(1), 0);
+			assertEquals(350, ds.getChannelMaximum(1), 0);
+
+			// Dims X, Y, Z(2), C(2): planes are (z0,c0), (z1,c0), (z0,c1),
+			// (z1,c1).
+			final ImgPlus<?> imgPlus = ds.getImgPlus();
+			for (int p = 0; p < 4; p++) {
+				final ColorTable table = imgPlus.getColorTable(p);
+				final boolean green = p >= 2;
+				assertEquals("plane " + p, green ? 51 : 255, table.get(ColorTable.RED,
+					255));
+				assertEquals("plane " + p, 255, table.get(ColorTable.GREEN, 255));
+				assertEquals("plane " + p, 0, table.get(ColorTable.GREEN, 0));
 			}
 		}
 		finally {

@@ -294,6 +294,83 @@ Design decisions made this session:
   code path, since none of this project's synthetic test datasets ever
   write a `display_settings.txt` either).
 
+## NDTiffStorage fork dependency
+
+pom.xml depends on `NDTiffStorage` **`2.19.3-dickinson`**, built from the
+lab's fork at `/Users/dd32968/Documents/NDStorage`
+(github.com/dickinson-lab/NDStorage), commit `50ead6e`, not the Maven Central
+release. That commit (made in a separate session) adds
+`NDTiffStorage.readDisplaySettings`: it reads `DisplaySettings.json` (the
+Property Map current Micro-Manager writes), falls back to the legacy
+`display_settings.txt`, stays silent when neither exists, and routes a real
+parse failure through `debugLogger_`. Stock 2.18.4 only looks for
+`display_settings.txt`, so it never loads current datasets' settings and
+prints "Couldn't read displaysettings" on every open. Checked directly: with
+the fork, a copy of a real Exp1177 `DisplaySettings.json` loads and nothing
+goes to stderr; with 2.18.4 it doesn't load and the warning prints. The fork
+is based on upstream 2.19.3; this plugin compiles and passes all its tests
+against it. Regression test: `testReadsMicroManagerDisplaySettingsJson`
+(fails against stock 2.18.4). The plugin's own `Parser.silencing` stderr
+filter is now redundant but harmless; left in place.
+
+The distinct `-dickinson` version is deliberate: reusing plain `2.19.3`
+would collide with the upstream release, so if the local Maven repository
+were ever cleared, a build would silently get upstream 2.19.3 without the
+fix. With a version that exists only locally, a missing artifact fails the
+build loudly instead.
+
+**This version exists only in this machine's `~/.m2`.** It was installed
+by hand (jar compiled with `javac --release 8` from the fork's
+`java/src/main/java` against MMCoreJ 10.1.1.0, plus a minimal pom declaring
+the MMCoreJ dependency) at
+`~/.m2/repository/org/micro-manager/ndtiffstorage/NDTiffStorage/2.19.3-dickinson/`.
+To rebuild it after changing the fork (or on another dev machine): in
+Eclipse, import `NDStorage/java` as an existing Maven project, then
+Run As → Maven build... with goals
+
+    package install:install-file -Dfile=target/NDTiffStorage-2.19.3.jar -DgroupId=org.micro-manager.ndtiffstorage -DartifactId=NDTiffStorage -Dversion=2.19.3-dickinson -Dpackaging=jar -Dmaven.javadoc.skip=true
+
+(`package` stops before the fork's GPG-signing step, which is bound to
+`verify`.) Then refresh this project (F5) and Maven → Update Project. Once
+the fix is released upstream, switch pom.xml back to that release and this
+section can go.
+
+## Applying Micro-Manager display settings
+
+Reading `DisplaySettings.json` (fork, above) only loads it; this is what
+uses it. `NDTiffDisplaySettings.forChannels` (called in `Parser.typedParse`
+while the storage is open; result kept on `Metadata.channelDisplay`) turns
+the Property Map's `ChannelSettings` into a color (`Color.scalar.Components`,
+sRGB 0-1) and display range (first `ComponentSettings` entry's
+`ScalingMin`/`ScalingMax`; `Long.MAX_VALUE` = unset) per dataset channel.
+Dataset channels are indices; their names come from summary metadata
+`ChNames` and are matched to settings entries **by name** (Exp1177's file
+lists 12 config-group channels for a 2-channel dataset), falling back to the
+same index. Best-effort: failures are logged and just mean Fiji's defaults.
+
+`NDTiffIOPlugin.open` then calls `NDTiffDisplaySettings.apply` on every
+opened Dataset before display (it finds the settings by unwrapping
+`SCIFIOImgPlus.getMetadata()` through any SCIFIO `MetadataWrapper`). This
+works purely on the ImageJ2 side, using what imagej-legacy 3.0.0 reads when
+building the window (checked in its source): per-plane ImgPlus color tables
+(set on every plane of each channel, black-to-color ramp) become the
+channel LUTs; `setChannelMinimum/Maximum` become the display ranges
+(overriding the min/max ImgOpener computed); `setCompositeChannelCount(n)`
+with n > 1 makes `ColorTableHarmonizer` pick `CompositeImage.COMPOSITE` (any
+image with a channel axis is already wrapped in a `CompositeImage` by
+`ImagePlusCreator`). Composite is used for all multi-channel images for now,
+regardless of the file's `ColorMode`. Not applied: gamma, `Visible`,
+autostretch. Position labels (`StagePositions[].Label`, e.g. `Pos0`) are
+available in summary metadata but deliberately not used for titles yet.
+
+Verified: unit tests `testDisplaySettingsMatchChannelsByName` and
+`testIOPluginAppliesDisplaySettings` (19/19 pass against Fiji's jars plus
+the fork), and a headless run of Fiji's real legacy conversion
+(`DisplayService.createDisplay` → `LegacyImageMap.registerDisplay`, the same
+path `DefaultLegacyOpener` uses before `imp.show()`): result was a
+`CompositeImage` in COMPOSITE mode with each channel's LUT color and display
+range matching the settings file. Not yet checked in the Fiji GUI.
+
 ## Building a portable distribution
 
 For distributing to other machines (mix of Mac/PC), pom.xml now uses
@@ -327,13 +404,13 @@ requiring three separate jars per machine:
 
 Build with Eclipse's Run As → Maven build... using goal `package` (same as
 before - the shade plugin's `shade` goal is bound to that phase, so no
-separate step is needed). The resulting `target/NDTiff-FIJI-0.1.jar` is the
+separate step is needed). The resulting `target/NDTiff-FIJI-0.2.jar` is the
 one file to copy to another machine's Fiji `jars/` folder - see "Installing
 into a real Fiji" below. This has been checked by hand against the declared
 dependency poms and jar contents, but not yet run through an actual build
 (no `mvn` CLI on this machine, Eclipse + m2e only) - confirm in Eclipse that
 `package` completes and that the resulting jar's size/content
-(`jar tf target/NDTiff-FIJI-0.1.jar | grep micromanager` should list
+(`jar tf target/NDTiff-FIJI-0.2.jar | grep micromanager` should list
 NDTiffStorage/MMCoreJ classes) look right before distributing it.
 
 ## Installing into a real Fiji
@@ -348,9 +425,14 @@ concern. It also already ships `scifio-jai-imageio-1.1.1.jar`, confirming
 the "permanently broken artifact" problem (see pom.xml notes above) is
 specific to fetching that artifact from Maven, not the jar itself.
 
+**When upgrading, delete the previous `NDTiff-FIJI-*.jar` from Fiji's
+`jars/` first** - the version is in the filename, so a new jar doesn't
+overwrite the old one, and two copies on the classpath means duplicate
+classes and plugins.
+
 To install: build with `mvn package` (via Eclipse's Run As → Maven build...
 - see "gotchas" below for why a plain Eclipse JAR export isn't enough), then
-copy the one shaded jar, `target/NDTiff-FIJI-0.1.jar`, into
+copy the one shaded jar, `target/NDTiff-FIJI-0.2.jar`, into
 `/Applications/Fiji/jars/`. As of the `maven-shade-plugin` addition to
 pom.xml (see "Building a portable distribution" below), that single jar
 already has `NDTiffStorage`/`MMCoreJ` bundled in, replacing the older
@@ -490,7 +572,7 @@ library source only):
 1. **Portable distribution** (`maven-shade-plugin` in pom.xml) - see
    "Building a portable distribution" above. Verify a `package` build
    actually produces a jar with `NDTiffStorage`/`MMCoreJ` classes bundled in
-   (`jar tf target/NDTiff-FIJI-0.1.jar | grep micromanager`), and that
+   (`jar tf target/NDTiff-FIJI-0.2.jar | grep micromanager`), and that
    dropping just that one jar into a *clean* Fiji install's `jars/` folder
    (i.e. one that's never had `NDTiffStorage-*.jar`/`MMCoreJ-*.jar` copied in
    separately) still opens a dataset correctly.

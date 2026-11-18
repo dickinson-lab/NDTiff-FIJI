@@ -179,6 +179,8 @@ public class NDTiffFormat extends AbstractFormat {
 		private Map<String, List<Object>> axisValues;
 		private List<Object> positions = Collections.emptyList();
 		private String positionTitleBase;
+		private List<NDTiffDisplaySettings.Channel> channelDisplay = Collections
+			.emptyList();
 		private int width, height, bitDepth, byteDepth, pixelType;
 		private boolean virtualStack;
 
@@ -246,6 +248,23 @@ public class NDTiffFormat extends AbstractFormat {
 		 */
 		void setPositionTitleBase(final String positionTitleBase) {
 			this.positionTitleBase = positionTitleBase;
+		}
+
+		/**
+		 * @param channelDisplay Micro-Manager's saved color/display range for
+		 *          each channel, in hyperstack channel order (see
+		 *          {@link NDTiffDisplaySettings}). Worked out during parsing,
+		 *          while the storage is still open, and applied to each opened
+		 *          image by {@link NDTiffIOPlugin}.
+		 */
+		void setChannelDisplay(
+			final List<NDTiffDisplaySettings.Channel> channelDisplay)
+		{
+			this.channelDisplay = channelDisplay;
+		}
+
+		List<NDTiffDisplaySettings.Channel> getChannelDisplay() {
+			return channelDisplay;
 		}
 
 		void setAxisValues(final Map<String, List<Object>> axisValues) {
@@ -477,6 +496,19 @@ public class NDTiffFormat extends AbstractFormat {
 			meta.setAxisValues(axisValues);
 			meta.setPositions(new ArrayList<>(valueSets.get(POSITION_AXIS)));
 			meta.setPositionTitleBase(dir.getName());
+
+			// Micro-Manager's saved channel colors/display ranges. Best-effort:
+			// a settings file this can't make sense of just means Fiji's
+			// defaults, never a failure to open the data.
+			try {
+				meta.setChannelDisplay(NDTiffDisplaySettings.forChannels(storage
+					.getDisplaySettings(), storage.getSummaryMetadata(), axisValues.get(
+						"channel")));
+			}
+			catch (final RuntimeException e) {
+				log().warn("Ignoring unreadable NDTiff display settings in " + dir,
+					e);
+			}
 
 			final HashMap<String, Object> representative = axesSet.iterator()
 				.next();

@@ -13,7 +13,7 @@
 	
 	<groupId>org.utdickinsonlab</groupId>
 	<artifactId>NDTiff-FIJI</artifactId>
-	<version>0.1</version>
+	<version>0.2</version>
 
 	<name>NDTiff Reader for FIJI</name>
 	<description>Opens Micro-Manager NDTiff files in FIJI</description>
@@ -126,11 +126,20 @@
 		instantiates CMMCore, which this plugin never does. Fiji does not
 		bundle either of these, so they stay at the default `compile` scope
 		and get packaged into the shaded distribution jar below.
+
+		NDTiffStorage is built from the lab's fork
+		(github.com/dickinson-lab/NDStorage, commit 50ead6e), not the Maven
+		Central release: the fork reads the DisplaySettings.json that current
+		Micro-Manager writes and no longer prints "Couldn't read
+		displaysettings" when no settings file exists. This version is NOT on
+		Maven Central - it must be installed into the local Maven repository
+		first (see "NDTiffStorage fork dependency" in PROGRESS.md). Once the
+		fix is released upstream, switch back to that release.
 		-->
 		<dependency>
 			<groupId>org.micro-manager.ndtiffstorage</groupId>
 			<artifactId>NDTiffStorage</artifactId>
-			<version>2.18.4</version>
+			<version>2.19.3-dickinson</version>
 		</dependency>
 		<dependency>
 			<groupId>org.micro-manager.mmcorej</groupId>

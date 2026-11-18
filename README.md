@@ -14,6 +14,9 @@ Micro-Manager's own viewer would open it.
 - Opens as a properly dimensioned hyperstack (Z / Channel / Time axes, as
   recorded in the dataset). Multi-position datasets open with each stage
   position in its own window, titled `<dataset> - Position <n>`.
+- Uses the channel colors and display ranges saved by Micro-Manager
+  (`DisplaySettings.json`), with multi-channel images shown in composite
+  mode.
 - For datasets larger than 2GB, prompts to open as a virtual stack (loading
   planes from disk on demand instead of reading the whole dataset into
   memory), matching classic ImageJ's own large-TIFF behavior.
@@ -37,6 +40,8 @@ Micro-Manager's own viewer would open it.
      inside. (On some macOS installs, `jars` instead sits as a sibling
      folder next to `Fiji.app`, rather than inside it - either way, it's
      the same `jars` folder Fiji itself uses.)
+   - **Upgrading?** Delete the old `NDTiff-FIJI-*.jar` from `jars` first -
+     having two versions installed at once causes conflicts.
 3. Restart Fiji if it was already running - it only scans the `jars` folder
    at startup.
 

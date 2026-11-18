@@ -1,12 +1,16 @@
 
 package io.scif.formats;
 
+import io.scif.Metadata;
 import io.scif.config.SCIFIOConfig;
 import io.scif.config.SCIFIOConfig.ImgMode;
+import io.scif.filters.MetadataWrapper;
+import io.scif.img.SCIFIOImgPlus;
 import io.scif.services.DatasetIOService;
 
 import java.io.File;
 import java.io.IOException;
+import java.util.Collections;
 import java.util.List;
 
 import net.imagej.Dataset;
@@ -84,6 +88,11 @@ public class NDTiffIOPlugin extends AbstractIOPlugin<Dataset> {
 	public Dataset open(final Location source) throws IOException {
 		final List<Dataset> positions = datasetIOService.openAll(source,
 			openAllConfig());
+		// Before anything is displayed: Micro-Manager's channel colors and
+		// display ranges, and composite mode.
+		for (final Dataset dataset : positions) {
+			NDTiffDisplaySettings.apply(dataset, channelDisplay(dataset));
+		}
 		if (!uiService.isHeadless()) {
 			for (int i = 1; i < positions.size(); i++) {
 				uiService.show(positions.get(i));
@@ -95,6 +104,26 @@ public class NDTiffIOPlugin extends AbstractIOPlugin<Dataset> {
 	@Override
 	public Dataset open(final String source) throws IOException {
 		return open(new FileLocation(new File(source)));
+	}
+
+	/**
+	 * @return The per-channel display settings the Parser stored on this
+	 *         dataset's {@link NDTiffFormat.Metadata}, or an empty list. ImgOpener
+	 *         attaches the reader's Metadata to each image, possibly wrapped by
+	 *         SCIFIO's reader filters (e.g. min/max computation), so unwrap it.
+	 */
+	private static List<NDTiffDisplaySettings.Channel> channelDisplay(
+		final Dataset dataset)
+	{
+		if (!(dataset.getImgPlus() instanceof SCIFIOImgPlus)) {
+			return Collections.emptyList();
+		}
+		Metadata meta = ((SCIFIOImgPlus<?>) dataset.getImgPlus()).getMetadata();
+		while (meta instanceof MetadataWrapper) {
+			meta = ((MetadataWrapper) meta).unwrap();
+		}
+		return meta instanceof NDTiffFormat.Metadata ? ((NDTiffFormat.Metadata) meta)
+			.getChannelDisplay() : Collections.emptyList();
 	}
 
 	/**
